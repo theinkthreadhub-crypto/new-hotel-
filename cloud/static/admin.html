@@ -10,16 +10,16 @@
 <link rel="icon" href="favicon.ico">
 <link rel="apple-touch-icon" href="icon-192.png">
 <style>
-  :root{ --bg:#f1f5f9; --card:#fff; --ink:#0f172a; --muted:#64748b; --line:#e2e8f0; --pri:#0ea5e9; --pri-ink:#fff; --ok:#16a34a; --bad:#dc2626; --warn:#d97706; --soft:#f8fafc; }
-  @media (prefers-color-scheme: dark){ :root{ --bg:#0b1220; --card:#111a2e; --ink:#e2e8f0; --muted:#94a3b8; --line:#1e293b; --soft:#0f172a; } }
+  :root{ --bg:#eef1f6; --card:#fff; --ink:#1d2433; --muted:#6b7385; --line:#e3e7ef; --pri:#2b4c7e; --pri-ink:#fff; --brand:#1f3a63; --ok:#16a34a; --bad:#dc2626; --warn:#d97706; --soft:#f8fafc; }
   *{ box-sizing:border-box }
   body{ margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 system-ui, -apple-system, Segoe UI, sans-serif }
-  header{ padding:12px 16px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; border-bottom:1px solid var(--line); background:var(--card); position:sticky; top:0; z-index:5 }
+  header{ padding:12px 16px; padding-top:max(12px, env(safe-area-inset-top)); display:flex; gap:10px; align-items:center; background:var(--brand); color:#fff; position:sticky; top:0; z-index:5 }
+  header h1{ flex:1; color:#fff } header button{ background:#ffffff26 !important; color:#fff !important; border:0 !important; padding:8px 10px; font-size:13px }
   h1{ font-size:17px; margin:0 } h2{ font-size:16px; margin:0 0 10px } h3{ font-size:14px; margin:16px 0 8px }
-  nav{ display:flex; gap:4px; margin-left:auto; flex-wrap:wrap }
-  nav button{ background:transparent; color:var(--ink); border:1px solid transparent }
-  nav button.on{ background:var(--pri); color:var(--pri-ink) }
-  main{ padding:16px; max-width:1240px; margin:0 auto }
+  nav{ display:flex; position:fixed; left:0; right:0; bottom:0; background:#fff; border-top:1px solid var(--line); z-index:6; padding-bottom:env(safe-area-inset-bottom) }
+  nav button{ flex:1; background:transparent; color:var(--muted); border:0; border-radius:0; padding:12px 2px; font-size:12px; font-weight:600 }
+  nav button.on{ color:var(--pri); box-shadow:inset 0 3px 0 var(--pri) }
+  main{ padding:12px; max-width:980px; margin:0 auto 80px }
   input, button, select, textarea{ font:inherit; padding:7px 10px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--ink) }
   button{ cursor:pointer; background:var(--pri); color:var(--pri-ink); border:0; font-weight:600 }
   button.g{ background:transparent; color:var(--ink); border:1px solid var(--line) }
@@ -53,7 +53,7 @@
   .rcpt .c{ text-align:center } .rcpt hr{ border:0; border-top:1px dashed #000 } .rcpt .r{ text-align:right } .rcpt td{ padding:1px 0; border:0 }
   #drawer{ position:fixed; inset:0; background:rgba(15,23,42,.55); display:none; z-index:10; overflow:auto; padding:20px 12px }
   #drawer .panel{ max-width:980px; margin:0 auto; background:var(--card); border-radius:14px; padding:18px; border:1px solid var(--line) }
-  #login{ max-width:380px; margin:60px auto }
+  #login{ max-width:380px; margin:9vh auto 0; padding:0 16px }
   #login input{ width:100%; margin:10px 0 }
   .err{ color:var(--bad); font-weight:600 } .ok{ color:var(--ok); font-weight:600 }
   code{ font:12px ui-monospace, Consolas, monospace; background:var(--soft); padding:1px 5px; border-radius:5px; word-break:break-all }
@@ -78,21 +78,23 @@
 </style>
 </head>
 <body>
-<div id="login" class="card">
-  <h1>Setu Pro Super Admin</h1>
-  <p class="muted">Aghanya Devanya Enterprises — vendor access only</p>
-  <form id="lf"><input id="key" type="password" placeholder="Admin Key" autocomplete="off" required>
-    <label style="display:flex;gap:8px;align-items:center;margin:0 0 10px;font-size:13px"><input id="remember" type="checkbox" style="width:auto;margin:0"> Remember on this device (only your own phone)</label>
-    <button style="width:100%">Open</button></form>
-  <p id="lerr" class="err"></p>
+<div id="login">
+  <div style="text-align:center"><img src="icon-192.png" alt="" style="width:64px;height:64px;border-radius:14px"><h2 style="margin:10px 0 2px">Setu Hotel — Super Admin</h2>
+    <p class="muted" style="margin:0 0 12px">Monitor all hotels, payments and support</p></div>
+  <div class="card"><form id="lf"><label>Admin Key</label><input id="key" type="password" placeholder="Cloudflare ADMIN_KEY" autocomplete="off" required>
+    <label style="display:flex;gap:8px;align-items:center;margin:0 0 10px;font-size:13px"><input id="remember" type="checkbox" style="width:auto;margin:0" checked> Remember on this device (only your own phone)</label>
+    <button style="width:100%;padding:11px">Open dashboard</button></form>
+  <p id="lerr" class="err"></p></div>
+  <p class="muted" style="text-align:center;font-size:12px">Aghanya Devanya Enterprises</p>
 </div>
 
 <div id="app" hidden>
   <header>
-    <h1>Setu Pro Super Admin</h1>
-    <nav id="nav"></nav>
-    <button class="g" onclick="logout()">Logout</button>
+    <h1>Super Admin</h1>
+    <button onclick="show(VIEW)" title="Refresh">↻</button>
+    <button onclick="logout()">Exit</button>
   </header>
+  <nav id="nav"></nav>
   <main id="main"></main>
 </div>
 <div id="drawer"><div class="panel" id="panel"></div></div>
@@ -100,7 +102,7 @@
 <div id="sheet"><div class="box" id="sbox"></div></div>
 
 <script>
-let KEY = '', META = null, HOTELS = [], VIEW = 'dash', CUR = null, TAB = 'overview';
+let KEY = '', META = null, HOTELS = [], VIEW = 'hotels', CUR = null, TAB = 'overview';
 // Remembered only on a device the vendor ticked (e.g. the Setu Admin phone app)
 try{ KEY = sessionStorage.getItem('setu_admin') || localStorage.getItem('setu_admin') || ''; }catch(e){}
 const $ = s => document.querySelector(s);
@@ -129,7 +131,7 @@ async function api(path, body){
 const run = fn => async (...a) => { try{ await fn(...a); }catch(e){ alert(e.message); } };
 
 // ---------------- navigation ----------------
-const VIEWS = {dash: 'Dashboard', hotels: 'Hotels', tickets: 'Tickets', add: '+ New Hotel', audit: 'Audit Log', blocked: 'Blocked'};
+const VIEWS = {hotels: 'Hotels', tickets: 'Tickets', dash: 'Dashboard', add: '+ New', audit: 'Log', blocked: 'Blocked'};
 let UNREAD = 0;
 function nav(){
   $('#nav').innerHTML = Object.entries(VIEWS).map(([k, v]) => `<button class="${VIEW === k ? 'on' : ''}" onclick="show('${k}')">${v}${k === 'tickets' && UNREAD ? `<span class="badge">${UNREAD}</span>` : ''}</button>`).join('');
@@ -649,7 +651,7 @@ async function openPanel(){
     try{ sessionStorage.setItem('setu_admin', KEY); if($('#remember') && $('#remember').checked) localStorage.setItem('setu_admin', KEY); }catch(e){}
     $('#login').hidden = true;
     $('#app').hidden = false;
-    show('dash');
+    show('hotels');   // like Library ERP: open on the list, most urgent first
   }catch(e){
     // A remembered key that no longer works must not keep trying (it would lock this device)
     if(/Invalid Admin Key/.test(e.message)){ try{ sessionStorage.removeItem('setu_admin'); localStorage.removeItem('setu_admin'); }catch(x){} KEY = ''; }
