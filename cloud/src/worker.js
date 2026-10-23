@@ -178,6 +178,36 @@ async function makeLicenseKey(env, installId, days){
   return 'SETU-' + b32encode(all).match(/.{1,8}/g).join('-');
 }
 
+// Vendor's PUBLIC key (same as LIC_PUBKEY in hotel_erp.html). LICENSE_PUBKEY overrides it.
+const LIC_PUBKEY = 'BM5bUDY3UM7RlEK5DtWhEq0N3mySWG27xZA3gmkCzNETrSpwrM1GaubNvi0XKGLeBZHPE8HeXlzpFeUBzFS25/M=';
+
+function b32decode(text, n){
+  let bits = '';
+  for(const c of text) bits += B32.indexOf(c).toString(2).padStart(5, '0');
+  const out = new Uint8Array(n);
+  for(let i = 0; i < n; i++) out[i] = parseInt(bits.slice(i * 8, i * 8 + 8), 2);
+  return out;
+}
+
+// A counter PC proves it is a real, licensed Setu install with its own signed key.
+// Returns { until, lifetime } (until = ms) or throws. Kind 4 (password reset) is never a licence.
+async function verifyLicense(env, key, installId){
+  const text = String(key || '').toUpperCase().replace(/[^A-Z2-7]/g, '');
+  if(!text.startsWith('SETU') || text.length < 128) throw new Error('license key required');
+  const bytes = b32decode(text.slice(4, 128), 77), payload = bytes.slice(0, 13), sig = bytes.slice(13);
+  const pub = await crypto.subtle.importKey('raw', Uint8Array.from(atob(env.LICENSE_PUBKEY || LIC_PUBKEY), c => c.charCodeAt(0)),
+    { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+  if(payload[0] !== 1 || !await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, pub, sig, payload)) throw new Error('license key not genuine');
+  const clean = String(installId || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const ih = new Uint8Array(await crypto.subtle.digest('SHA-256', enc(clean)));
+  if(clean.length < 8 || [0, 1, 2, 3].some(i => ih[i] !== payload[4 + i])) throw new Error('license key is for another computer');
+  const kind = payload[1], value = (payload[2] << 8) | payload[3], issued = LIC_EPOCH + ((payload[11] << 8) | payload[12]) * DAY;
+  if(kind === 3) return { until: Date.now() + 3650 * DAY, lifetime: true };
+  if(kind === 1) return { until: issued + (value + 1) * DAY, lifetime: false };
+  if(kind === 2) return { until: issued + DAY + value * 60000, lifetime: false };
+  throw new Error('not a license key');
+}
+
 // ---------- Razorpay / Cloudflare APIs ----------
 async function razorpay(env, method, path, body){
   if(!env.RAZORPAY_KEY_ID || !env.RAZORPAY_KEY_SECRET) throw new Error('Online payment is not configured yet');
@@ -265,11 +295,21 @@ export class SetuRegistry extends DurableObject {
         const digits = i < 20 ? 3 : 5;
         const code = stem + String(crypto.getRandomValues(new Uint32Array(1))[0] % 10 ** digits).padStart(digits, '0');
         if(one('SELECT 1 AS x FROM hotel WHERE code = ?', code)) continue;
-        this.sql.exec(`INSERT INTO hotel (code, name, owner, phone, email, created, paid_until, status, plan, tier, btype) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'trial', ?, ?)`,
-          code, body.name, body.owner, body.phone, body.email, now, body.paidUntil, body.status || 'trial', body.tier || '', body.btype || '');
+        this.sql.exec(`INSERT INTO hotel (code, name, owner, phone, email, created, paid_until, status, plan, tier, btype, iid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          code, body.name, body.owner, body.phone, body.email, now, body.paidUntil, body.status || 'trial', body.plan || 'trial', body.tier || '', body.btype || '', body.iid || '');
         return json(200, { code });
       }
       return json(500, { error: 'code not free' });
+    }
+    if(path === '/byiid'){
+      const h = body.iid ? one('SELECT code FROM hotel WHERE iid = ? ORDER BY created DESC LIMIT 1', body.iid) : null;
+      return json(200, { code: h ? h.code : '' });
+    }
+    if(path === '/claimiid'){
+      // An Install ID belongs to one hotel: the one that just restored onto that PC
+      this.sql.exec(`UPDATE hotel SET iid = '' WHERE iid = ? AND code <> ?`, body.iid, body.code);
+      this.sql.exec('UPDATE hotel SET iid = ? WHERE code = ?', body.iid, body.code);
+      return json(200, { ok: true });
     }
     if(path === '/release'){
       this.sql.exec('DELETE FROM hotel WHERE code = ?', body.code);
@@ -583,6 +623,38 @@ export class SetuHotel extends DurableObject {
       ...(setup ? { setup: true, hotelName: a.name, owner: a.owner, phone: a.phone } : {}) });
   }
 
+  // New / formatted counter PC: Hotel Code + owner password gives it a fresh Sync Key.
+  // Same wrong-try lock as the phone login; only the owner (manager) password works.
+  async counterRestore(request, text){
+    let b;
+    try{ b = JSON.parse(text); }catch(e){ return json(400, { error: 'bad request' }); }
+    const ip = request.headers.get('CF-Connecting-IP') || 'unknown', now = Date.now();
+    const fails = this.kvGet('fail:' + ip) || { n: 0, at: now };
+    if(now - fails.at > FAIL_WINDOW){ fails.n = 0; fails.at = now; }
+    if(fails.n >= FAIL_LIMIT) return json(429, { error: 'Too many wrong tries. Please wait 15 minutes.' });
+    const a = this.account, pw = String(b.password || '');
+    let ok = false, d = {};
+    try{ d = JSON.parse(this.data()) || {}; }catch(e){}
+    // The owner's own password only (not a staff Manager PIN): it moves the whole hotel to this PC
+    if(pw && (pw === String((d.settings || {}).adminPin || '') || pw === String((d.auth || {}).password || ''))) ok = true;
+    else if(!this.meta.version && a.ownerHash && pw && sameText(await sha256(pw), a.ownerHash)) ok = true;
+    if(!ok){
+      fails.n++;
+      this.kvSet('fail:' + ip, fails);
+      return json(403, { error: 'Wrong owner password' });
+    }
+    this.kvDel('fail:' + ip);
+    if(isWeak(pw)) return json(403, { error: 'Owner password bahut aasaan hai. Purane PC par Settings mein password badlein, ya vendor se reset karwayein.' });
+    const syncKey = randomHex(20);
+    a.syncHash = await sha256(syncKey);
+    a.syncKey = syncKey;
+    const iid = String(b.installId || '').toUpperCase();
+    if(/^SETU-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(iid)) a.installId = iid;
+    this.saveAccount();
+    if(a.installId === iid) await regCall(this.env, '/claimiid', { code: a.code, iid }).catch(() => {});
+    return json(200, { code: a.code, name: a.name, syncKey });
+  }
+
   // ----- Super Admin changes to this hotel -----
   async adminUpdate(b){
     const a = this.account, c = a.config;
@@ -669,7 +741,8 @@ export class SetuHotel extends DurableObject {
       if(this.account) return json(409, { error: 'exists' });
       const b = body();
       const syncKey = randomHex(20);
-      this.account = { code: b.code, name: b.name, owner: b.owner, phone: b.phone, email: b.email, installId: b.installId || '',
+      this.account = { code: b.code, name: b.name, owner: b.owner, phone: b.phone, email: b.email, installId: b.installId || b.counterId || '',
+        ...(b.lifetime ? { lifetime: true } : {}),
         created: Date.now(), paidUntil: b.paidUntil, status: b.status || 'trial', plan: b.plan || 'trial',
         syncHash: await sha256(syncKey), syncKey, pendingKeys: [], config: newConfig(b.businessType, b.tier),
         ...(b.password ? { ownerHash: await sha256(b.password), ownerPass: b.password, initialDays: b.days } : {}) };
@@ -711,6 +784,7 @@ export class SetuHotel extends DurableObject {
     if(method === 'GET' && path === '/api/ping') return json(200, { setu: true, cloud: true, saas: true, local: false, hotel: this.account.code, name: this.account.name, hostLocked: locked, version: this.meta.version });
     if(method === 'GET' && path === '/api/info') return json(200, { setu: true, cloud: true, saas: true, local: false, ips: [] });
     if(method === 'POST' && path === '/api/login') return this.login(request, text);
+    if(method === 'POST' && path === '/api/counter/restore') return this.counterRestore(request, text);
 
     const role = await this.role(request);
     if(!role) return json(401, { error: 'pin required' });
@@ -790,6 +864,19 @@ export class SetuHotel extends DurableObject {
       }
     }
 
+    // Counter PC licence renewed (keygen or Super Admin): the cloud period follows the signed key
+    if(method === 'POST' && path === '/api/counter/license'){
+      if(role !== 'sync') return json(403, { error: 'main counter only' });
+      const a = this.account;
+      if(a.plan !== 'counter') return json(200, { ok: true, paidUntil: a.paidUntil, ignored: true });
+      let lic;
+      try{ lic = await verifyLicense(this.env, body().key, a.installId); }catch(e){ return json(400, { error: e.message }); }
+      if(lic.lifetime) a.lifetime = true;
+      if(lic.until > (a.paidUntil || 0)){ a.paidUntil = lic.until; if(a.status !== 'suspended') a.status = 'active'; }
+      this.saveAccount();
+      return json(200, { ok: true, paidUntil: a.paidUntil, lifetime: !!a.lifetime });
+    }
+
     // New sync key for the counter PC (shown once)
     if(method === 'POST' && path === '/api/synckey'){
       if(role !== 'admin') return json(403, { error: 'manager only' });
@@ -843,14 +930,14 @@ async function createHotel(env, input, opts){
   const paidUntil = Date.now() + opts.days * DAY;
   const tier = opts.tier || (TEMPLATES[input.businessType] || TEMPLATES.restaurant).tier;
   const r = await regCall(env, '/reserve', { name: input.name, owner: input.owner, phone: input.phone, email: input.email, paidUntil,
-    ip: opts.ip, admin: opts.admin, status: opts.status, tier, btype: input.businessType });
+    ip: opts.ip, admin: opts.admin, status: opts.status, plan: opts.plan, tier, btype: input.businessType, iid: opts.counterId || '' });
   if(r.status === 429) return json(429, { error: 'Too many sign-ups from this network. Please try again in an hour.' });
   if(!r.ok) return json(500, { error: 'Could not create the hotel. Please try again.' });
   const { code } = await r.json();
   const h = await hotelStub(env, code).fetch('https://hotel/internal/create', { method: 'POST', body: JSON.stringify({
     code, name: input.name, owner: input.owner, phone: input.phone, email: input.email, businessType: input.businessType, tier,
     installId: opts.installId || '', password: opts.installId ? '' : input.password, days: opts.days, paidUntil,
-    status: opts.status, plan: opts.plan }) });
+    status: opts.status, plan: opts.plan, counterId: opts.counterId || '', lifetime: !!opts.lifetime }) });
   if(!h.ok){
     await regCall(env, '/release', { code });
     return json(500, { error: 'Could not create the hotel. Please try again.' });
@@ -868,6 +955,26 @@ async function signup(request, env){
   if(!env.LICENSE_PRIVATE_KEY) return json(503, { error: 'Sign-up is not available yet (vendor setup pending)' });
   return createHotel(env, input, { days: +env.TRIAL_DAYS || 14, installId, ip: request.headers.get('CF-Connecting-IP') || 'unknown',
     tier: TIERS[env.TRIAL_TIER] ? env.TRIAL_TIER : 'premium' });
+}
+
+// Library-ERP style: a licensed counter PC joins the cloud by itself, no codes to type.
+// The signed licence key (tied to this Install ID) is the proof; one hotel per Install ID.
+async function counterLink(request, env){
+  let b;
+  try{ b = await request.json(); }catch(e){ return json(400, { error: 'bad request' }); }
+  const installId = String(b.installId || '').toUpperCase();
+  if(!/^SETU-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(installId)) return json(400, { error: 'install id' });
+  let lic;
+  try{ lic = await verifyLicense(env, b.key, installId); }catch(e){ return json(403, { error: e.message }); }
+  // Already joined (setu-cloud.json lost, Windows reinstalled): only the owner password may take it over
+  const have = (await regJson(env, '/byiid', { iid: installId })).code;
+  if(have) return json(409, { error: 'linked', code: have });
+  const phone = String(b.phone || '').replace(/\D/g, '').slice(-10);
+  const input = { name: str(b.name, 80) || 'Setu Hotel', owner: str(b.owner, 60) || 'Owner', phone, email: '',
+    businessType: TEMPLATES[b.businessType] ? b.businessType : 'restaurant' };
+  const days = Math.max(1, Math.ceil((lic.until - Date.now()) / DAY));
+  return createHotel(env, input, { days, counterId: installId, lifetime: lic.lifetime, status: 'active', plan: 'counter',
+    ip: request.headers.get('CF-Connecting-IP') || 'unknown' });
 }
 
 async function webhook(request, env){
@@ -1029,6 +1136,7 @@ export default {
       return env.ASSETS.fetch(request);
     }
     if(path === '/api/signup' && request.method === 'POST') return signup(request, env);
+    if(path === '/api/counter/link' && request.method === 'POST') return counterLink(request, env);
     if(path === '/api/razorpay/webhook' && request.method === 'POST') return webhook(request, env);
     if(path.startsWith('/api/admin/')) return admin(request, env, path);
     // The hotel's own domain decides the hotel; a header from the browser cannot override it

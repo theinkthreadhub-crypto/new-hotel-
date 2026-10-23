@@ -7172,11 +7172,50 @@ async function drawCloudCard(){
     : '<b style="color:#d97706">Connecting...</b>';
   const link = c.url ? c.url + '/hotel_erp.html' : '';
   const hotelLine = c.hotel ? `Hotel Code: <b>${esc(c.hotel)}</b><br>` : '';
+  const a = c.auto || {};
   cloudPill();
-  el.innerHTML = headT + `
-    <p style="margin:0 0 10px">Status: ${stat}</p>
-    <div style="margin:0 0 10px">${installIdHTML()}</div>
+  // Like Library ERP: a licensed counter joins by itself; the owner only needs Hotel Code + password
+  const joinMsg = c.enabled === false ? 'Cloud aapne band kiya hai. Chalu karne ke liye neeche button dabayein.'
+    : a.state === 'waiting' ? 'Menu ya pehla bill banate hi ye PC khud cloud se jud jayega. Naya computer hai? Neeche Hotel Code + owner password se purana data laayein.'
+    : a.state === 'nolicense' ? 'Pehle activation key lagayein (K). Uske baad internet milte hi ye PC khud cloud se jud jayega.'
+    : a.state === 'offline' ? 'Internet nahi mila. Internet aate hi PC khud jud jayega (30 minute mein dobara koshish).'
+    : a.state === 'error' ? `Cloud se judne mein dikkat: ${esc(a.error || '')}. Apne vendor ko batayein.`
+    : 'Cloud se jud raha hai...';
+  const restoreForm = (code, title) => `<h4 style="margin:14px 0 6px">${title}</h4>
     <div class="grid">
+      <div><label>Hotel Code</label><input id="cr_hotel" value="${esc(code || '')}" placeholder="SHARM482" style="text-transform:uppercase" autocomplete="off"></div>
+      <div><label>Owner password</label><input id="cr_pass" type="password" autocomplete="off" onkeydown="if(event.key==='Enter')cloudRestore()"></div>
+    </div>
+    <div class="btns"><button class="btn ok" onclick="cloudRestore()">Cloud se Jodein</button></div>`;
+  let html;
+  if(!c.configured){
+    html = headT + (a.state === 'linked'
+      ? `<p style="margin:0 0 6px"><b>Ye PC pehle Hotel Code ${esc(a.code)} se juda tha.</b> Owner password daalkar dobara jodein. Cloud ka data is PC par aa jayega.</p>` + restoreForm(a.code, 'Dobara Jodein')
+      : `<p style="margin:0 0 10px">Status: <b style="color:#d97706">${joinMsg}</b></p>
+        <div class="btns"><button class="btn ok" onclick="cloudJoin()">${c.enabled === false ? 'Cloud Chalu Karein' : 'Abhi Jodein'}</button>
+          <button class="btn g" onclick="drawCloudCard()">Status Refresh</button></div>
+        ${restoreForm('', 'Naya computer? Purana data cloud se laayein')}
+        <p class="muted" style="margin:4px 0 0">Hotel Code purane PC par Settings → Setu Cloud mein, ya owner ke phone app mein milta hai.</p>`) + `
+      <details style="margin-top:14px"><summary class="muted" style="cursor:pointer">Advanced: Cloud URL / Sync Key haath se bharein</summary>
+      <div style="margin:8px 0">${installIdHTML()}</div>
+      <div class="grid">`;
+  } else if(c.ok === false && /Invalid Cloud Sync Key/.test(c.error || '')){
+    // Another PC restored this hotel and got a new key: this PC is no longer the main counter
+    html = headT + `<p style="margin:0 0 6px"><b style="color:#dc2626">Hotel ${esc(c.hotel || '')} ab doosre computer par chalu hai.</b> Is PC ka data cloud par nahi ja raha.</p>
+      <p class="muted" style="margin:0">Isi PC ko main counter banana ho to owner password daalkar dobara jodein. Cloud ka data is PC par aa jayega, aur doosra PC cloud se hat jayega.</p>`
+      + restoreForm(c.hotel, 'Dobara Jodein') + `
+    <details style="margin:14px 0 10px"><summary class="muted" style="cursor:pointer">Advanced: Cloud URL / Sync Key</summary>
+    <div style="margin:8px 0">${installIdHTML()}</div>
+    <div class="grid">`;
+  } else {
+    html = headT + `
+    <p style="margin:0 0 10px">Status: ${stat}</p>
+    <p style="margin:0 0 10px;font-size:15px">Hotel Code: <b style="font-size:18px;letter-spacing:1px">${esc(c.hotel || '')}</b></p>
+    <details style="margin:0 0 10px"><summary class="muted" style="cursor:pointer">Advanced: Cloud URL / Sync Key</summary>
+    <div style="margin:8px 0">${installIdHTML()}</div>
+    <div class="grid">`;
+  }
+  el.innerHTML = html + `
       <div><label>Cloud URL</label><input id="cl_url" placeholder="https://setu-cloud.theinkthreadhub.workers.dev" value="${esc(c.url || 'https://setu-cloud.theinkthreadhub.workers.dev')}"></div>
       <div><label>Hotel Code</label><input id="cl_hotel" placeholder="e.g. SHARM482" value="${esc(c.hotel || '')}" style="text-transform:uppercase"></div>
       <div><label>Cloud Sync Key ${c.hasKey ? '(saved — enter only to change)' : ''}</label><input id="cl_key" type="password" autocomplete="off" placeholder="${c.hasKey ? '••••••••' : 'Sync Key'}"></div>
@@ -7185,7 +7224,7 @@ async function drawCloudCard(){
       <button class="btn ok" onclick="saveCloud(true)">Save &amp; Connect</button>
       ${c.configured ? '<button class="btn bad" onclick="saveCloud(false)">Turn Off Cloud Sync</button>' : ''}
       <button class="btn g" onclick="drawCloudCard()">Status Refresh</button>
-    </div>
+    </div></details>
     ${c.configured && link ? `<h4 style="margin:14px 0 6px">Owner Mobile App</h4>
     <div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">
       <div class="qrbox">${qrSvg(link)}<small>Scan with the owner's phone</small></div>
@@ -7195,6 +7234,33 @@ async function drawCloudCard(){
         <button class="btn wa sm" onclick="waOpen(D.settings.phone, ownerAppText('${esc(link)}', '${esc(c.hotel || '')}'))">Send to owner on WhatsApp</button>
         <span class="muted">Keep this PC on and online. Billing continues here even without internet and syncs when the connection returns.</span></div>
     </div>` : ''}`;
+}
+
+async function cloudJoin(){
+  toast('Cloud se jod rahe hain...');
+  try{
+    const r = await srvFetch('/api/cloud/join', {method: 'POST', body: '{}'});
+    const j = await r.json().catch(() => ({}));
+    if(!r.ok) alert(j.error || ('HTTP ' + r.status));
+    else if((j.auto || {}).state === 'joined'){ audit('Cloud Sync On', 'joined ' + j.auto.code); save(); toast('Cloud se jud gaya. Hotel Code: ' + j.auto.code); }
+  }catch(e){ alert('Could not reach the Main Counter server'); }
+  drawCloudCard();
+  setTimeout(drawCloudCard, 6000);
+}
+
+async function cloudRestore(){
+  const hotel = ($('#cr_hotel')?.value || '').trim().toUpperCase(), password = $('#cr_pass')?.value || '';
+  if(!hotel || !password) return toast('Hotel Code aur owner password dono bharein');
+  if(!confirm('Cloud ka data is PC par aa jayega. Is PC ka abhi ka data cloud wale data se badal jayega. Aage badhein?')) return;
+  toast('Cloud se data laa rahe hain...');
+  try{
+    const r = await srvFetch('/api/cloud/restore', {method: 'POST', body: JSON.stringify({hotel, password})});
+    const j = await r.json().catch(() => ({}));
+    if(!r.ok){ alert(j.error || ('HTTP ' + r.status)); return; }
+    toast('Cloud se jud gaya. Data kuch second mein aa jayega.');
+  }catch(e){ alert('Could not reach the Main Counter server'); return; }
+  drawCloudCard();
+  setTimeout(drawCloudCard, 6000);
 }
 
 async function saveCloud(enabled){

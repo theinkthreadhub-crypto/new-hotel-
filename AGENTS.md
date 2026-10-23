@@ -104,6 +104,12 @@ Rebuild the EXE on Windows with `Build-New-EXE.bat`.
   change the Python port too.** On the cloud (`SRV.cloud` / `SRV.saas`) login = Hotel Code + PIN (or the hotel's domain), weak PINs
   are refused, 5 wrong PINs lock an IP for 15 min, direct printing is off. Never trust the client for billing or modules: the Worker
   decides `blocked`, `D.saas` and what off-modules may change.
+- **Auto-join (Library ERP style):** a licensed counter with menu or bills joins Setu Cloud by itself
+  (`CloudSync.auto_link()` -> Worker `/api/counter/link`, proof = the PC's own signed `SETU-` key + Install ID,
+  `DEFAULT_CLOUD_URL`). One hotel per Install ID (registry `iid`); a second join gets 409 and needs
+  `/api/counter/restore` (Hotel Code + owner password -> new Sync Key; `restore` flag makes the first sync take the
+  cloud copy but keep this PC's Install ID and licence). Joined hotels have `plan: 'counter'`; `/api/counter/license`
+  moves `paidUntil` to the newest signed key. Deploy: `.github/workflows/setu-cloud-deploy.yml`.
 - **Setu Pro config in the app:** `featureOn()` / `screenOn()` hide modules (`FEATURE_SCREENS`, `drawSide`, `go`). `applySaas()` (in
   `ensureGrowth`) maps the bill template and rules onto `settings`. `billFields()` = custom bill fields (`B.extra` -> `bill.extra`,
   printed by `billHTML` / `escBill`). `saasRules().phoneAbove` needs a mobile on big bills. Support links (`#support=CODE.TOKEN`) open a
