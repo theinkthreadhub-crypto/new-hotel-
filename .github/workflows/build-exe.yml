@@ -1,5 +1,6 @@
 # Builds the Windows EXE on GitHub, so nobody needs Python on their own PC.
-# Download: GitHub -> Actions -> "Build Setu EXE" -> latest run -> Artifacts -> Setu-POS-Setup.
+# Download: the "setu-latest" release on GitHub (Releases -> Setu-POS-Setup.zip),
+# or Actions -> "Build Setu EXE" -> latest run -> Artifacts -> Setu-POS-Setup.
 name: Build Setu EXE
 
 on:
@@ -14,6 +15,9 @@ on:
       - '*.bat'
       - '.github/workflows/build-exe.yml'
   workflow_dispatch:
+
+permissions:
+  contents: write   # to update the setu-latest release
 
 jobs:
   build:
@@ -46,3 +50,22 @@ jobs:
           name: Setu-POS-Setup
           path: Setu-POS-Setup
           retention-days: 90
+
+      # One fixed download link that always has the newest EXE
+      - name: Zip setup folder
+        shell: pwsh
+        run: Compress-Archive -Path Setu-POS-Setup -DestinationPath Setu-POS-Setup.zip -Force
+
+      - name: Update setu-latest release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = "Newest Setu EXE (branch ${{ github.ref_name }}, commit ${{ github.sha }}). Download Setu-POS-Setup.zip, Extract All, run Install-Aghanya-Devanya-ERP-Setup.bat."
+          gh release view setu-latest *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create setu-latest Setu-POS-Setup.zip --title "Setu POS - Latest EXE" --notes $notes --target ${{ github.sha }}
+          } else {
+            gh release edit setu-latest --notes $notes
+            gh release upload setu-latest Setu-POS-Setup.zip --clobber
+          }
