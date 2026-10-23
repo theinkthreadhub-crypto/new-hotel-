@@ -13,3 +13,5 @@ Activation-Keys-*.txt
 
 # License signing key: vendor only, NEVER commit
 *.pem
+installer/MicrosoftEdgeWebview2Setup.exe
+Output/
