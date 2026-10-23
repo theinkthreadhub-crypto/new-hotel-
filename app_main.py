@@ -781,6 +781,41 @@ def main():
         except KeyboardInterrupt:
             return
 
+    try:
+        open_window(base_dir, data_dir, url)
+    except Exception as e:
+        # No WebView2 runtime (old Windows 10 / 7) or a broken pywebview: the server is already
+        # up, so run Setu in the normal browser instead of closing without a word.
+        log_line(data_dir, f'Desktop window failed, opening browser: {e!r}')
+        import webbrowser
+        webbrowser.open(url)
+        msg = ('Setu ki window nahi khul payi, isliye Setu browser mein khula hai.\n\n'
+               'Window ke liye Microsoft Edge WebView2 Runtime install karein '
+               '(go.microsoft.com/fwlink/p/?LinkId=2124703).\n\n'
+               'Billing chalu rakhne ke liye ye message band karein, Setu chalta rahega.')
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(0, msg, 'Setu', 0x40)
+        except Exception:
+            print(msg)
+        if already:
+            return
+        try:
+            while True:
+                time.sleep(3600)
+        except KeyboardInterrupt:
+            return
+
+
+def log_line(data_dir, msg):
+    try:
+        with open(os.path.join(data_dir, 'setu-server.log'), 'a', encoding='utf-8') as f:
+            f.write(time.strftime('%Y-%m-%d %H:%M:%S ') + msg + '\n')
+    except Exception:
+        pass
+
+
+def open_window(base_dir, data_dir, url):
     import webview  # only needed for the desktop window
 
     icon_path = os.path.join(base_dir, 'favicon.ico')
@@ -804,12 +839,14 @@ def main():
     for sub in ('Service Worker', 'Cache', 'Code Cache'):
         shutil.rmtree(os.path.join(data_dir, 'EBWebView', 'Default', sub), ignore_errors=True)
 
+    # Ask for Edge WebView2 by name: without it pywebview drops to old IE (MSHTML), where the
+    # page does not work. Asking by name makes it fail here, so main() opens the browser.
     webview.start(
+        gui='edgechromium' if os.name == 'nt' else None,
         private_mode=False,
         storage_path=data_dir,
         icon=icon_path
     )
-
 
 if __name__ == '__main__':
     main()
