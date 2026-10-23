@@ -3314,6 +3314,13 @@ function setDisc(v){
   syncDisc();
   drawTotals();
 }
+// Rupees or percent: switching keeps the typed number and re-reads it in the new unit
+function setDiscType(t){
+  B.discType = t;
+  setDisc($('#b_disc').value);
+  scrBill();
+  setTimeout(() => $('#b_disc') && $('#b_disc').focus(), 0);
+}
 const billDisc = () => (+B.disc || 0) + redeemRs();
 
 function onPhone(v){
@@ -3461,12 +3468,12 @@ function scrBill(){
 
       <div id="cart" style="margin-top:12px"></div>
 
-      <div class="grid" style="grid-template-columns:120px 1fr;margin-top:12px">
+      <div class="grid" style="grid-template-columns:150px 1fr;margin-top:12px">
         <div>
           <label>Discount</label>
           <div style="display:flex;gap:4px">
             <input id="b_disc" type="number" min="0" style="min-width:0" value="${B.discType === '%' ? (B.discPct || '') : (B.disc || '')}" oninput="setDisc(this.value)">
-            <select style="width:58px" onchange="B.discType=this.value;setDisc($('#b_disc').value)"><option value="₹" ${B.discType !== '%' ? 'selected' : ''}>₹</option><option value="%" ${B.discType === '%' ? 'selected' : ''}>%</option></select>
+            ${['₹', '%'].map(t => `<button type="button" class="btn sm ${(B.discType === '%') === (t === '%') ? 'ok' : 'g'}" style="margin:0;padding:0 10px;min-width:34px" title="${t === '%' ? 'Discount in percent' : 'Discount in rupees'}" onclick="setDiscType('${t}')">${t}</button>`).join('')}
           </div>
         </div>
         <div>
