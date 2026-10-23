@@ -7,7 +7,7 @@ echo     SETU LICENSE KEY GENERATOR - Aghanya Devanya Enterprises
 echo ===================================================================
 echo.
 echo Ask the client for their Install ID (shown on the Setu Sign Up / License screen).
-echo Plans: 1m 2m 3m 6m 1y life demo1h demo24h
+echo Plans: 1m 2m 3m 6m 1y life demo1h demo24h   reset = owner password bhool gaya
 echo.
 if not exist "setu-license-private.pem" (
   echo [ERROR] setu-license-private.pem was not found in this folder.

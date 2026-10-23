@@ -264,12 +264,12 @@ tfoot td{font-weight:700;background:var(--surface);border-top:2px solid var(--bo
 .quick-btn-group button:hover{background:var(--primary-light);border-color:var(--primary);color:var(--primary-dark)}
 
 /* Modal & Toast */
-#modal{position:fixed;inset:0;background:rgba(15,23,42,0.6);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;z-index:100;padding:16px}
+#modal{position:fixed;inset:0;background:rgba(15,23,42,0.6);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;z-index:10000000;padding:16px}
 #modal.open{display:flex}
 #modal .box{background:#fff;border-radius:12px;width:min(600px,100%);max-height:90vh;overflow:auto;box-shadow:0 20px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)}
 #modal .box h3{margin:0;background:var(--topbar);color:#fff;padding:14px 18px;font-size:15px;font-weight:700}
 #modal .box .in{padding:18px}
-#toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#0f172a;color:#fff;padding:10px 20px;border-radius:8px;display:none;z-index:200;font-size:13px;font-weight:600;box-shadow:0 8px 16px rgba(0,0,0,0.2)}
+#toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#0f172a;color:#fff;padding:10px 20px;border-radius:8px;display:none;z-index:10000001;font-size:13px;font-weight:600;box-shadow:0 8px 16px rgba(0,0,0,0.2)}
 pre.wa{background:#f0fdf4;border:1px solid #bbf7d0;padding:14px;border-radius:8px;white-space:pre-wrap;font:13px/1.5 'Plus Jakarta Sans',sans-serif;margin:0;color:#166534}
 .den input{width:90px;text-align:right}
 #print{display:none}
@@ -522,6 +522,9 @@ body.kitchen-mode .kcard ul{font-size:19px}
     <div style="margin-top:14px;display:flex;justify-content:space-between;align-items:center;font-size:12px">
       <a href="javascript:void(0)" onclick="showLoginView('signup')" style="color:var(--primary);font-weight:700;text-decoration:none">+ New Sign Up / Register</a>
       <a href="javascript:void(0)" onclick="openActivationModal()" style="color:#64748b;text-decoration:none">Enter Activation Key</a>
+    </div>
+    <div style="margin-top:8px;text-align:center;font-size:12px">
+      <a href="javascript:void(0)" onclick="forgotPass()" style="color:#dc2626;font-weight:700;text-decoration:none">Password bhool gaye?</a>
     </div>
 
         <div style="margin-top:12px;background:#f8fafc;border:1px dashed #94a3b8;border-radius:8px;padding:8px 12px;text-align:center">
@@ -1543,25 +1546,36 @@ function b32ToBytes(text, n){
   return out;
 }
 
+// Checks the vendor signature and that the key belongs to this install.
+// Returns {payload, id} or {reason}. Kind 4 (password reset) is never a license.
+async function licVerify(keyStr){
+  const text = licClean(keyStr);
+  if(!text.startsWith('SETU') || text.length < 4 + 124) return { reason: 'format' };
+  if(!(window.crypto && crypto.subtle)) return { reason: 'secure' };
+  try{
+    const bytes = b32ToBytes(text.slice(4, 4 + 124), 77);
+    const payload = bytes.slice(0, 13), sig = bytes.slice(13);
+    const pub = await crypto.subtle.importKey('raw', Uint8Array.from(atob(LIC_PUBKEY), c => c.charCodeAt(0)), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+    const ok = await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, pub, sig, payload);
+    if(!ok || payload[0] !== 1) return { reason: 'signature' };
+    const ih = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(cleanInstallId(D.settings.installId))));
+    if([0, 1, 2, 3].some(i => ih[i] !== payload[4 + i])) return { reason: 'install' };
+    return { payload, id: text.slice(0, 4 + 124) };
+  }catch(e){}
+  return { reason: 'format' };
+}
+
 async function getActivationKeyInfo(keyStr){
   const raw = String(keyStr || '').trim().toUpperCase();
   if(SPECIAL_DEMO_KEYS[raw]){
     const d = SPECIAL_DEMO_KEYS[raw];
     return { valid: true, id: raw, plan: d.plan, minutes: d.minutes, days: +(d.minutes / 1440).toFixed(4), isLifetime: false, isDemo: true };
   }
-  const text = licClean(raw);
-  if(!text.startsWith('SETU') || text.length < 4 + 124) return { valid: false, reason: 'format' };
-  if(!(window.crypto && crypto.subtle)) return { valid: false, reason: 'secure' };
+  const v = await licVerify(raw);
+  if(v.reason) return { valid: false, reason: v.reason };
   try{
-    const bytes = b32ToBytes(text.slice(4, 4 + 124), 77);
-    const payload = bytes.slice(0, 13), sig = bytes.slice(13);
-    const pub = await crypto.subtle.importKey('raw', Uint8Array.from(atob(LIC_PUBKEY), c => c.charCodeAt(0)), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
-    const ok = await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, pub, sig, payload);
-    if(!ok || payload[0] !== 1) return { valid: false, reason: 'signature' };
-    const ih = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(cleanInstallId(D.settings.installId))));
-    if([0, 1, 2, 3].some(i => ih[i] !== payload[4 + i])) return { valid: false, reason: 'install' };
+    const { payload, id } = v;
     const kind = payload[1], value = (payload[2] << 8) | payload[3];
-    const id = text.slice(0, 4 + 124);
     if(kind === 3) return { valid: true, id, plan: 'Lifetime Enterprise License', days: 99999, isLifetime: true };
     if(kind === 2) return { valid: true, id, plan: `Demo (${value} Minutes)`, minutes: value, days: +(value / 1440).toFixed(4), isLifetime: false, isDemo: true };
     const names = {30: '1 Month (30 Days)', 60: '2 Months (60 Days)', 90: '3 Months (90 Days)', 180: '6 Months (180 Days)', 365: '1 Year (365 Days)'};
@@ -7058,6 +7072,46 @@ function changeOwnerPass(){
   save();
   ['#op_cur', '#op_new', '#op_cf'].forEach(id => $(id).value = '');
   toast('Password changed — use it on this PC and on the phone app');
+}
+
+// Forgot owner password: the vendor signs a one-time Reset Key for this Install ID
+// (python keygen.py <INSTALL-ID> reset). Nothing secret lives in the page.
+function forgotPass(){
+  if(SRV.cloud) return modal('Password bhool gaye?', `<p>Apne vendor (Aghanya Devanya Enterprises) ko Hotel Code bhejein. Wo Super Admin se naya password set kar denge.</p><div class="btns"><button class="btn g" onclick="closeModal()">Close</button></div>`);
+  modal('Password bhool gaye?', `
+    <p>1. Ye Install ID apne vendor (Aghanya Devanya Enterprises) ko bhejein:</p>
+    <div class="inst-id" style="margin:6px 0 12px">${installIdHTML()}</div>
+    <p>2. Vendor ek <b>Reset Key</b> denge. Wo sirf isi PC par, ek hi baar aur 2 din tak chalti hai.</p>
+    <div class="grid">
+      <div style="grid-column:1/-1"><label>Reset Key</label><input id="fp_key" class="key-input" placeholder="SETU-XXXXXXXX-... (poori key paste karein)" autocomplete="off"></div>
+      <div><label>Naya password (6+ characters)</label><input id="fp_new" type="password" autocomplete="new-password"></div>
+      <div><label>Naya password dobara</label><input id="fp_cf" type="password" autocomplete="new-password" onkeydown="if(event.key==='Enter')resetOwnerPass()"></div>
+    </div>
+    <div class="btns"><button class="btn ok" onclick="resetOwnerPass()">Password Reset Karein</button><button class="btn g" onclick="closeModal()">Cancel</button></div>`);
+  setTimeout(() => $('#fp_key') && $('#fp_key').focus(), 50);
+}
+
+async function resetOwnerPass(){
+  const key = $('#fp_key').value, nw = $('#fp_new').value.trim(), cf = $('#fp_cf').value.trim();
+  if(nw.length < 6) return toast('Naya password: kam se kam 6 characters');
+  if(WEAK_PASS.includes(nw.toLowerCase()) || /^(.)\1+$/.test(nw)) return toast('Password bahut aasaan hai, mushkil password rakhein');
+  if(nw !== cf) return toast('Dono naye password same nahi hain');
+  const v = await licVerify(key);
+  if(v.reason) return toast(LIC_ERRORS[v.reason] || LIC_ERRORS.format);
+  if(v.payload[1] !== 4) return toast('Ye Reset Key nahi hai. Vendor se Reset Key maangein.');
+  const age = Math.floor((Date.now() - LIC_EPOCH) / 86400000) - ((v.payload[11] << 8) | v.payload[12]);
+  if(age > 2 || age < -1) return toast('Reset Key purani ho gayi. Vendor se nayi Reset Key lein.');
+  if(!D.subscription.usedKeys) D.subscription.usedKeys = [];
+  if(D.subscription.usedKeys.includes(v.id)) return toast('Ye Reset Key pehle hi use ho chuki hai.');
+  D.subscription.usedKeys.push(v.id);
+  D.auth = {...(D.auth || {}), password: nw};
+  D.settings.adminPin = nw;
+  audit('Owner Password Changed', 'Reset Key se (password bhool gaye)');
+  save();
+  closeModal();
+  const uidv = (D.auth || {}).userId || '';
+  if($('#login_user_id') && uidv) $('#login_user_id').value = uidv;
+  modal('Password badal gaya', `<p>Naye password se sign in karein.</p>${uidv ? `<p>Aapka User ID: <b>${esc(uidv)}</b></p>` : ''}<div class="btns"><button class="btn ok" onclick="closeModal()">OK</button></div>`);
 }
 
 // Header pill: is this hotel's data reaching Setu Cloud?

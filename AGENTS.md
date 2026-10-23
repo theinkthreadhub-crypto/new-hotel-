@@ -116,6 +116,8 @@ Rebuild the EXE on Windows with `Build-New-EXE.bat`.
   `LIC_PUBKEY` and `settings.installId` (needs a secure context: 127.0.0.1 / localhost / https).
   Used keys go to `subscription.usedKeys`. `subscription.lastSeen` blocks clock rollback.
   Built-in `AD-DEMO-*` keys work once per install and never shorten a running license.
+  Kind 4 = owner password Reset Key (`keygen.py <ID> reset`): `forgotPass()` / `resetOwnerPass()` on the sign-in screen,
+  one use, valid 2 days from issue; `getActivationKeyInfo()` must keep refusing it as a license. Both share `licVerify()`.
   Never put real keys, salts or private keys in the page.
 - **Staff & permissions:** `activeUser = {name, role: 'admin'|'cashier', access: 'manager'|'cashier'|'captain'}`.
   Staff log in with their own PIN (`staff[].pin/access`). `go()` blocks `CASHIER_BLOCK` screens and keeps
