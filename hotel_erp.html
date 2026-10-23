@@ -1171,6 +1171,7 @@ async function srvPoll(){
 
 const LIVE_SCREENS = ['gateway', 'kitchen', 'online', 'bills', 'captain', 'tokens', 'reservations', 'daybook', 'settlement'];
 function srvRefreshScreen(){
+  saasNotices();
   updateOnlinePills();
   updateSubscriptionUI();
   if(!activeUser || isModal()) return;
@@ -2490,6 +2491,7 @@ const MENU = [
   ['Y','Zomato/Swiggy Settlement','settlement','Accounts'],
   ['V','Audit Log (Theft Check)','audit','Accounts'],
   ['J','Monthly Report → CA / Lawyer','monthly','Accounts'],
+  ['1','Help & Support (Setu Pro)','support','Utilities'],
   ['K','Aghanya Devanya License','license','Utilities'],
   ['G','Settings & Backup','settings','Utilities'],
 ];
@@ -2509,6 +2511,7 @@ const SCREENS = {
   menu: scrMenu,
   license: () => openSubscriptionModal(),
   settings: scrSettings,
+  support: scrSupport,
   kitchen: scrKitchen,
   qr: scrQR,
   customers: scrCustomers,
@@ -2525,7 +2528,7 @@ const SCREENS = {
 };
 
 let kdsTimer = null;
-const CASHIER_BLOCK = ['settings', 'reports', 'outlets', 'staff', 'suppliers', 'settlement', 'menu', 'audit', 'monthly'];
+const CASHIER_BLOCK = ['settings', 'reports', 'outlets', 'staff', 'suppliers', 'settlement', 'menu', 'audit', 'monthly', 'support'];
 const CAPTAIN_ALLOW = ['captain', 'kitchen', 'tokens'];
 // Current staff member's ticked screens (looked up fresh so Staff edits apply at once)
 const userPerms = () => { const st = activeUser && activeUser.staffId && (D.staff || []).find(x => x.id === activeUser.staffId); return (st && st.perms) || []; };
@@ -6767,6 +6770,89 @@ function scrAudit(){
   <p class="muted">Cashiers and captains need a Manager PIN to cancel bills, remove items after KOT, delete entries or give discounts above the limit. This log cannot be edited (only Reset All Data clears it).</p>`;
 }
 
+/* ================= VENDOR MESSAGE, WARNING / LOCK (Setu Cloud) ================= */
+// The Super Admin sets these on the cloud; they arrive in D.saas with the next sync. Data is never touched.
+function saasNotices(){
+  const c = D.saas || {}, lk = c.lock && +c.lock.lv ? c.lock : null;
+  let w = $('#saas-warn');
+  if(lk && lk.lv === 1){
+    if(!w){ w = document.createElement('div'); w.id = 'saas-warn'; document.body.prepend(w); }
+    w.style.cssText = 'background:#dc2626;color:#fff;padding:8px 16px;font-weight:700;font-size:13px;text-align:center';
+    w.textContent = (lk.msg || 'Payment due hai. Kripya Aghanya Devanya Enterprises se sampark karein.');
+  } else if(w) w.remove();
+  let l = $('#saas-lock');
+  if(lk && lk.lv === 2){
+    if(!l){ l = document.createElement('div'); l.id = 'saas-lock'; document.body.appendChild(l); }
+    l.style.cssText = 'position:fixed;inset:0;background:radial-gradient(circle at 50% 15%,#1e293b 0%,#090d16 100%);z-index:99999999;display:flex;align-items:center;justify-content:center;padding:20px';
+    l.innerHTML = `<div class="login-card" style="max-width:460px;text-align:center">
+      <h2 style="margin-top:0">Setu band hai</h2>
+      <p style="font-size:15px">${esc(lk.msg || 'Kripya Aghanya Devanya Enterprises se sampark karein.')}</p>
+      <p class="muted">Aapka saara data is computer par surakshit hai. Vendor ke chalu karte hi Setu wapas chalne lagega (internet chahiye).</p>
+      <div class="btns" style="justify-content:center"><button class="btn g" onclick="backup()">Backup Download</button></div>
+      <div style="margin-top:12px;font-size:11px;color:#64748b">Powered by Aghanya Devanya Enterprises</div></div>`;
+  } else if(l) l.remove();
+  const n = c.notice;
+  if(n && n.t && activeUser && !isModal() && lsGet('setu_notice_seen') !== String(n.at)){
+    lsSet('setu_notice_seen', String(n.at));
+    modal('Message: Aghanya Devanya Enterprises', `<p style="font-size:15px;white-space:pre-wrap">${esc(n.t)}</p><div class="btns"><button class="btn ok" onclick="closeModal()">OK</button></div>`);
+  }
+}
+setInterval(() => { try{ saasNotices(); }catch(e){} }, 15000);
+
+/* ================= HELP & SUPPORT (tickets to Setu Pro) ================= */
+let SUP = [];
+async function scrSupport(){
+  main.innerHTML = `<div class="title">Help &amp; Support (Setu Pro)</div><div class="card" id="sup-card"><p class="muted">Loading...</p></div>`;
+  const el = $('#sup-card');
+  if(!SRV.on){ el.innerHTML = '<p>Help &amp; Support <b>Setu Desktop App (EXE)</b> par chalta hai, aur PC Setu Cloud se juda hona chahiye.</p>'; return; }
+  let j = {};
+  try{
+    const r = await srvFetch('/api/support/tickets');
+    j = await r.json().catch(() => ({}));
+    if(!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  }catch(e){
+    el.innerHTML = `<p class="muted">${esc(e.message)}</p><p>Seedha baat karni ho to vendor ko WhatsApp karein.</p>`;
+    return;
+  }
+  SUP = j.tickets || [];
+  el.innerHTML = `<h3 style="margin-top:0">Nayi shikayat / sawaal</h3>
+    <div class="grid"><div style="grid-column:1/-1"><label>Vishay (Subject)</label><input id="sup_sub" maxlength="100" placeholder="e.g. Printer se bill nahi nikal raha"></div>
+      <div style="grid-column:1/-1"><label>Poori baat likhein</label><textarea id="sup_txt" rows="3" maxlength="2000" style="width:100%"></textarea></div></div>
+    <div class="btns"><button class="btn ok" onclick="supSend()">Bhejein</button><button class="btn g" onclick="scrSupport()">Refresh</button></div>
+    <h3>Aapke tickets</h3>
+    ${SUP.map(t => `<div class="card" style="cursor:pointer;margin:8px 0;padding:10px 12px" onclick="supOpen('${esc(t.id)}')">
+      <b>${esc(t.subject)}</b> ${t.unread_hotel ? '<span class="sub-pill bad">Naya jawab</span>' : ''} <span class="sub-pill ${t.status === 'resolved' ? 'ok' : 'warn'}">${t.status === 'resolved' ? 'Hal ho gaya' : 'Khula'}</span>
+      <div class="muted" style="font-size:12px">${esc(((t.msgs || []).slice(-1)[0] || {}).text || '')}</div></div>`).join('') || '<p class="muted">Abhi koi ticket nahi.</p>'}
+    <p class="muted">Jawab yahin aata hai. Internet chahiye.</p>`;
+  setTimeout(() => $('#sup_sub') && $('#sup_sub').focus(), 30);
+}
+async function supPost(body){
+  const r = await srvFetch('/api/support/ticket', {method: 'POST', body: JSON.stringify(body)});
+  const j = await r.json().catch(() => ({}));
+  if(!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+async function supSend(){
+  const subject = $('#sup_sub').value.trim(), text = $('#sup_txt').value.trim();
+  if(!text) return toast('Poori baat likhein');
+  try{ await supPost({subject, text}); toast('Ticket bhej diya. Jawab yahin aayega.'); scrSupport(); }catch(e){ alert(e.message); }
+}
+function supOpen(id){
+  const t = SUP.find(x => x.id === id);
+  if(!t) return;
+  modal(t.subject, `<div style="max-height:45vh;overflow:auto">${(t.msgs || []).map(m => `<div style="margin:6px 0;padding:8px 10px;border-radius:8px;white-space:pre-wrap;${m.by === 'admin' ? 'background:#dcfce7;margin-left:30px' : 'background:#f1f5f9;margin-right:30px'}">${esc(m.text)}
+      <div class="muted" style="font-size:11px">${m.by === 'admin' ? 'Setu Pro' : 'Aap'} · ${new Date(m.at).toLocaleString('en-IN')}</div></div>`).join('')}</div>
+    <label>Jawab likhein</label><textarea id="sup_rep" rows="3" style="width:100%"></textarea>
+    <div class="btns"><button class="btn ok" onclick="supReply('${esc(id)}')">Bhejein</button>
+      ${t.status !== 'resolved' ? `<button class="btn g" onclick="supReply('${esc(id)}', true)">Hal ho gaya</button>` : ''}
+      <button class="btn g" onclick="closeModal()">Close</button></div>`);
+}
+async function supReply(id, resolve){
+  const text = ($('#sup_rep')?.value || '').trim();
+  if(!text && !resolve) return toast('Jawab likhein');
+  try{ await supPost({id, text, ...(resolve ? {status: 'resolved'} : {})}); closeModal(); toast('Bhej diya'); scrSupport(); }catch(e){ alert(e.message); }
+}
+
 /* ================= SETTINGS & SECURITY ================= */
 function scrSettings(){
   const s = D.settings;
@@ -7451,6 +7537,7 @@ async function autoPrinterSetup(){
     applyCloudKeys();
   }
   startUI();
+  try{ saasNotices(); }catch(e){}   // vendor warning / lock shows before anyone signs in
   autoPrinterSetup();
   setTimeout(cloudPill, 3000);
 })();

@@ -57,6 +57,23 @@
   #login input{ width:100%; margin:10px 0 }
   .err{ color:var(--bad); font-weight:600 } .ok{ color:var(--ok); font-weight:600 }
   code{ font:12px ui-monospace, Consolas, monospace; background:var(--soft); padding:1px 5px; border-radius:5px; word-break:break-all }
+  /* Library ERP style hotel cards */
+  .kpis{ display:grid; grid-template-columns:repeat(5, 1fr); gap:8px; margin-bottom:12px } @media (max-width:700px){ .kpis{ grid-template-columns:repeat(2, 1fr) } }
+  .k{ background:var(--card); border:2px solid var(--line); border-radius:12px; padding:10px; text-align:center; cursor:pointer } .k.on{ border-color:var(--pri) }
+  .k b{ display:block; font-size:22px } .k span{ font-size:11px; color:var(--muted) }
+  .hcard{ background:var(--card); border:1px solid var(--line); border-radius:14px; padding:12px; margin-bottom:10px }
+  .hcard .top{ display:flex; gap:8px; align-items:flex-start } .hcard .top .nm{ flex:1; min-width:0 }
+  .info{ display:grid; grid-template-columns:1fr 1fr; gap:2px 14px; margin:8px 0; font-size:13px } @media (max-width:560px){ .info{ grid-template-columns:1fr } }
+  .info div{ display:flex; justify-content:space-between; gap:8px; border-bottom:1px solid var(--line); padding:4px 0 } .info span{ color:var(--muted) } .info b{ text-align:right }
+  .alert{ border-radius:10px; padding:7px 10px; font-size:13px; font-weight:600; margin:6px 0 } .alert.warn{ background:#fef3c7; color:#92400e } .alert.bad{ background:#fee2e2; color:#991b1b }
+  .acts{ display:flex; flex-wrap:wrap; gap:6px; margin-top:8px } .acts a, .acts button{ padding:6px 10px; font-size:13px; border-radius:8px; text-decoration:none }
+  a.btnl{ background:transparent; color:var(--ink); border:1px solid var(--line); font-weight:600 } a.btnl.wa{ background:#16a34a; color:#fff; border-color:#16a34a }
+  .badge{ background:var(--bad); color:#fff; border-radius:20px; font-size:11px; padding:1px 7px; margin-left:4px }
+  #sheet{ position:fixed; inset:0; background:rgba(15,23,42,.55); display:none; z-index:15; align-items:flex-end; justify-content:center }
+  #sheet.open{ display:flex } #sheet .box{ background:var(--card); width:100%; max-width:560px; border-radius:16px 16px 0 0; max-height:90vh; overflow:auto; padding:16px }
+  #sheet textarea, #sheet input, #sheet select{ width:100% }
+  .msg{ max-width:85%; padding:8px 11px; border-radius:12px; margin:6px 0; white-space:pre-wrap } .msg.hotel{ background:var(--soft); border:1px solid var(--line) } .msg.admin{ background:#dcfce7; color:#14532d; margin-left:auto }
+  .msg small{ display:block; color:var(--muted); font-size:11px }
   #toast{ position:fixed; bottom:16px; left:50%; transform:translateX(-50%); background:#0f172a; color:#fff; padding:9px 16px; border-radius:10px; display:none; z-index:20 }
 </style>
 </head>
@@ -80,6 +97,7 @@
 </div>
 <div id="drawer"><div class="panel" id="panel"></div></div>
 <div id="toast"></div>
+<div id="sheet"><div class="box" id="sbox"></div></div>
 
 <script>
 let KEY = '', META = null, HOTELS = [], VIEW = 'dash', CUR = null, TAB = 'overview';
@@ -111,13 +129,14 @@ async function api(path, body){
 const run = fn => async (...a) => { try{ await fn(...a); }catch(e){ alert(e.message); } };
 
 // ---------------- navigation ----------------
-const VIEWS = {dash: 'Dashboard', hotels: 'Hotels', add: '+ New Hotel', audit: 'Audit Log'};
+const VIEWS = {dash: 'Dashboard', hotels: 'Hotels', tickets: 'Tickets', add: '+ New Hotel', audit: 'Audit Log', blocked: 'Blocked'};
+let UNREAD = 0;
 function nav(){
-  $('#nav').innerHTML = Object.entries(VIEWS).map(([k, v]) => `<button class="${VIEW === k ? 'on' : ''}" onclick="show('${k}')">${v}</button>`).join('');
+  $('#nav').innerHTML = Object.entries(VIEWS).map(([k, v]) => `<button class="${VIEW === k ? 'on' : ''}" onclick="show('${k}')">${v}${k === 'tickets' && UNREAD ? `<span class="badge">${UNREAD}</span>` : ''}</button>`).join('');
 }
-const show = run(async v => { VIEW = v; nav(); await ({dash: drawDash, hotels: drawHotels, add: drawAdd, audit: drawAudit})[v](); });
+const show = run(async v => { VIEW = v; nav(); await ({dash: drawDash, hotels: drawHotels, tickets: drawTickets, add: drawAdd, audit: drawAudit, blocked: drawBlocked})[v](); nav(); });
 
-async function loadHotels(){ HOTELS = (await api('/api/admin/hotels')).hotels; }
+async function loadHotels(){ const j = await api('/api/admin/hotels'); HOTELS = j.hotels; UNREAD = j.ticketsUnread || 0; }
 
 // ---------------- dashboard ----------------
 async function drawDash(){
@@ -147,26 +166,182 @@ async function drawDash(){
     </div>`;
 }
 
-// ---------------- hotels list ----------------
+// ---------------- hotels list (Library ERP style cards) ----------------
+const DAYMS = 864e5;
+// Counter licence from the hotel's data: 'lifetime' or a date (ISO)
+const licDays = h => h.lic === 'lifetime' ? Infinity : h.lic ? Math.ceil((Date.parse(h.lic) - Date.now()) / DAYMS) : null;
+const payDays = h => h.paid_until ? Math.ceil((h.paid_until - Date.now()) / DAYMS) : null;
+const staleH = h => h.seen ? (Date.now() - h.seen) / 36e5 : 1e9;
+const telHref = p => 'tel:' + String(p || '').replace(/[^\d+]/g, '');
+const waHref = (p, name) => { let d = String(p || '').replace(/\D/g, ''); if(d.length === 10) d = '91' + d;
+  return 'https://wa.me/' + d + '?text=' + encodeURIComponent('Namaste ' + (name || '') + ' ji, Aghanya Devanya Enterprises (Setu POS) se baat ho rahi hai.'); };
+// Hotels that need you come first: licence / payment running out, no backup, open tickets
+function urgency(h){
+  const d = licDays(h), p = payDays(h);
+  let u = 0;
+  if(d !== null && d !== Infinity){ if(d < 0) u = 200; else if(d <= 5) u = 150 - d; }
+  if(p !== null && state(h) !== 'suspended'){ if(p < 0) u = Math.max(u, 120); else if(p <= 5) u = Math.max(u, 100 - p); }
+  if(h.tickets) u = Math.max(u, 90);
+  if(staleH(h) > 48 && h.seen) u = Math.max(u, 50);
+  return u;
+}
+let KF = 'all';
+const KFS = {all: 'All hotels', stale: 'Backup stale (48h+)', lic: 'Licence ≤5 days / expired', pay: 'Cloud payment due ≤5 days', tk: 'Unread tickets'};
+function kfMatch(h){
+  if(KF === 'stale') return staleH(h) > 48;
+  if(KF === 'lic'){ const d = licDays(h); return d !== null && d !== Infinity && d <= 5; }
+  if(KF === 'pay'){ const p = payDays(h); return p !== null && p <= 5 && state(h) !== 'suspended'; }
+  if(KF === 'tk') return h.tickets > 0;
+  return true;
+}
+function setKF(k){ KF = KF === k && k !== 'all' ? 'all' : k; drawHotelsBody(); }
 async function drawHotels(){
   await loadHotels();
-  $('#main').innerHTML = `
-    <div class="row" style="margin-bottom:10px"><input id="q" placeholder="Search name / code / mobile / Install ID / domain" style="flex:1;min-width:220px">
-      <select id="fs"><option value="">All statuses</option><option>active</option><option>trial</option><option>expired</option><option>suspended</option></select></div>
-    <div class="wrap"><table><thead><tr><th>Hotel</th><th>Code / Install ID</th><th>Type / Plan</th><th>Owner</th><th>Status</th><th>Backup</th><th>Paid Till</th><th>Domain</th><th>Joined</th></tr></thead><tbody id="rows"></tbody></table></div>`;
-  $('#q').oninput = $('#fs').onchange = rows;
-  rows();
+  $('#main').innerHTML = `<div id="kpis"></div>
+    <div class="row" style="margin-bottom:10px"><input id="q" placeholder="Search name / code / mobile / Install ID / domain" style="flex:1;min-width:220px"></div>
+    <div id="fbar"></div><div id="cards"></div>`;
+  $('#q').oninput = drawCards;
+  drawHotelsBody();
 }
-function rows(){
-  const q = $('#q').value.trim().toLowerCase(), f = $('#fs').value;
-  const list = HOTELS.filter(h => (!f || state(h) === f) && (!q || [h.name, h.code, h.phone, h.owner, h.iid || '', ...(h.domains || []).map(d => d.host)].join(' ').toLowerCase().includes(q)));
-  $('#rows').innerHTML = list.map(h => `<tr class="click" onclick="openHotel('${esc(h.code)}')">
-    <td><b>${esc(h.name)}</b><div class="muted">${esc(h.email || '')}</div></td><td><code>${esc(h.code)}</code><div class="muted" style="font-size:11px">${h.iid ? esc(h.iid) : 'no Install ID yet'}</div></td>
-    <td>${esc((META.templates[h.btype] || {}).label || h.btype || '-')}<div class="muted">${esc((META.tiers[h.tier] || {}).label || '-')}</div></td>
-    <td>${esc(h.owner)}<div class="muted">${esc(h.phone)}</div></td><td>${pill(state(h))}</td><td>${health(h.seen)}</td><td>${d8(h.paid_until)}</td>
-    <td>${(h.domains || []).map(d => `<div>${esc(d.host)} ${d.status !== 'active' ? pill('pending') : ''}</div>`).join('') || '<span class="muted">-</span>'}</td><td>${d8(h.created)}</td></tr>`).join('')
-    || '<tr><td colspan="9" class="muted">No hotels</td></tr>';
+function drawHotelsBody(){
+  const n = k => HOTELS.filter(h => { const o = KF; KF = k; const m = kfMatch(h); KF = o; return m; }).length;
+  $('#kpis').innerHTML = `<div class="kpis">${Object.entries({all: 'Hotels', stale: 'Backup stale', lic: 'Licence ≤5d', pay: 'Payment ≤5d', tk: 'Tickets'}).map(([k, l]) => {
+    const c = n(k);
+    return `<div class="k ${KF === k ? 'on' : ''}" onclick="setKF('${k}')"><b class="${k !== 'all' && c ? 'err' : k === 'all' ? '' : 'ok'}">${c}</b><span>${l}</span></div>`; }).join('')}</div>`;
+  $('#fbar').innerHTML = KF !== 'all' ? `<div class="row" style="margin-bottom:8px"><b>Showing: ${KFS[KF]}</b><button class="g" onclick="setKF('all')">Show all</button></div>` : '';
+  drawCards();
 }
+function drawCards(){
+  const q = ($('#q').value || '').trim().toLowerCase();
+  const list = HOTELS.filter(kfMatch).filter(h => !q || [h.name, h.code, h.phone, h.owner, h.iid || '', ...(h.domains || []).map(d => d.host)].join(' ').toLowerCase().includes(q))
+    .sort((a, b) => urgency(b) - urgency(a) || b.created - a.created);
+  $('#cards').innerHTML = list.map(h => {
+    const d = licDays(h), p = payDays(h), sh = staleH(h), C = esc(h.code);
+    let al = '';
+    if(d !== null && d !== Infinity && d < 0) al += `<div class="alert bad">Counter licence expired on ${d8(Date.parse(h.lic))} — renew now</div>`;
+    else if(d !== null && d !== Infinity && d <= 5) al += `<div class="alert warn">Counter licence ends on ${d8(Date.parse(h.lic))} — ${d} day${d === 1 ? '' : 's'} left</div>`;
+    if(p !== null && state(h) !== 'suspended' && h.plan !== 'counter'){
+      if(p < 0) al += `<div class="alert bad">Cloud payment overdue since ${d8(h.paid_until)}</div>`;
+      else if(p <= 5) al += `<div class="alert warn">Cloud payment due on ${d8(h.paid_until)} — in ${p} day${p === 1 ? '' : 's'}</div>`;
+    }
+    if(h.tickets) al += `<div class="alert warn">${h.tickets} new ticket message${h.tickets === 1 ? '' : 's'} from the hotel</div>`;
+    return `<div class="hcard"><div class="top"><div class="nm"><b style="font-size:15px">${esc(h.name)}</b> ${pill(state(h))}
+        <div class="muted" style="font-size:12px"><code onclick="navigator.clipboard.writeText('${C}').then(() => toast('Copied ${C}'))" style="cursor:pointer">${C}</code> · ${esc(h.owner || '')} · ${esc(h.phone || '-')}</div></div></div>
+      ${al}
+      <div class="info">
+        <div><span>Joined</span><b>${d8(h.created)}</b></div>
+        <div><span>Type / Plan</span><b>${esc((META.templates[h.btype] || {}).label || '-')} · ${esc((META.tiers[h.tier] || {}).label || '-')}</b></div>
+        <div><span>Counter licence</span><b class="${d === Infinity ? 'ok' : d === null ? '' : d < 0 ? 'err' : d <= 5 ? 'err' : 'ok'}">${d === Infinity ? 'Lifetime' : d === null ? '-' : d8(Date.parse(h.lic)) + ' · ' + d + 'd'}</b></div>
+        <div><span>Cloud paid till</span><b>${h.plan === 'counter' ? 'follows licence' : p === null ? '-' : d8(h.paid_until) + (p < 0 ? ' · overdue' : ' · ' + p + 'd')}</b></div>
+        <div><span>Backup</span><b>${health(h.seen)}</b></div>
+        <div><span>Install ID</span><b><code>${esc(h.iid || '-')}</code></b></div>
+      </div>
+      <div class="row" style="gap:6px">${h.notice ? '<span class="pill p-pending">Message showing in app</span>' : ''}${+h.lockv === 2 ? '<span class="pill p-expired">App locked</span>' : +h.lockv === 1 ? '<span class="pill p-pending">Warning showing</span>' : ''}${(h.domains || []).map(x => `<span class="pill p-trial">${esc(x.host)}</span>`).join('')}</div>
+      <div class="acts">
+        ${h.phone ? `<a class="btnl" href="${telHref(h.phone)}">Call</a><a class="btnl wa" href="${waHref(h.phone, h.owner)}" target="_blank" rel="noopener">WhatsApp</a>` : ''}
+        <button onclick="openHotel('${C}')">Open</button>
+        <button class="g" onclick="noticeBox('${C}')">Message</button>
+        <button class="${+h.lockv ? 'bad' : 'g'}" onclick="lockBox('${C}')">${+h.lockv === 2 ? 'Locked' : +h.lockv === 1 ? 'Warning' : 'Lock'}</button>
+        <button class="g" onclick="hotelTickets('${C}')">Tickets${h.tickets ? `<span class="badge">${h.tickets}</span>` : ''}</button>
+        <button class="g" onclick="dlBackup('${C}')">Backup</button>
+        <button class="bad" onclick="delBox('${C}')">Delete</button>
+      </div></div>`;
+  }).join('') || `<p class="muted">${KF === 'all' ? 'No hotels yet' : 'Nothing in this filter ✔'}</p>`;
+}
+
+// ----- sheet dialogs -----
+function sheet(html){ $('#sbox').innerHTML = html; $('#sheet').classList.add('open'); }
+function closeSheet(){ $('#sheet').classList.remove('open'); }
+$('#sheet').onclick = e => { if(e.target.id === 'sheet') closeSheet(); };
+const hotelBy = code => HOTELS.find(h => h.code === code) || {code, name: code};
+const adminUpdate = async (code, update, msg) => { await api('/api/admin/hotel', {code, update}); toast(msg); closeSheet(); await loadHotels(); if(VIEW === 'hotels') drawHotelsBody(); };
+function noticeBox(code){
+  const h = hotelBy(code);
+  sheet(`<h2>Message to ${esc(h.name)}</h2><p class="muted">Hotel ke Setu mein popup dikhega (PC online hote hi, kuch second mein). Khaali karke Clear dabayein to hat jayega.</p>
+    <textarea id="nm" rows="4" maxlength="500" placeholder="Jaise: Payment due hai, kripya jama karein. — Aghanya Devanya Enterprises">${esc(h.notice || '')}</textarea>
+    <div class="row" style="margin-top:10px"><button onclick="saveNotice('${esc(code)}', true)">Send</button>${h.notice ? `<button class="bad" onclick="saveNotice('${esc(code)}', false)">Clear</button>` : ''}<button class="g" onclick="closeSheet()">Close</button></div>`);
+}
+const saveNotice = run(async (code, on) => {
+  const t = on ? $('#nm').value.trim() : '';
+  if(on && !t) return toast('Type a message');
+  await adminUpdate(code, {notice: t}, on ? 'Message sent' : 'Message cleared');
+});
+function lockBox(code){
+  const h = hotelBy(code), lv = +h.lockv || 0;
+  sheet(`<h2>Lock / Warning — ${esc(h.name)}</h2><p class="muted">Payment na aane par Setu par warning ya lock laga sakte hain. Payment aane par "Normal" karke hata dein. Data hamesha safe rehta hai.</p>
+    <label>Mode</label><select id="lv"><option value="0" ${lv === 0 ? 'selected' : ''}>Normal (kuch nahi)</option><option value="1" ${lv === 1 ? 'selected' : ''}>Warning banner (Setu chalta rahega)</option><option value="2" ${lv === 2 ? 'selected' : ''}>Lock (Setu band, sirf message dikhega)</option></select>
+    <label style="margin-top:8px">Message (Setu mein dikhega)</label><textarea id="lm" rows="3" maxlength="300" placeholder="Jaise: Subscription due. Aghanya Devanya Enterprises se sampark karein."></textarea>
+    <div class="row" style="margin-top:10px"><button onclick="saveLock('${esc(code)}')">Apply</button><button class="g" onclick="closeSheet()">Close</button></div>`);
+}
+const saveLock = run(async code => {
+  const lv = +$('#lv').value;
+  if(lv === 2 && !confirm('Lock Setu for this hotel? Billing on all their devices stops until you set it back to Normal.')) return;
+  await adminUpdate(code, {lock: {lv, msg: $('#lm').value.trim()}}, ['Lock removed', 'Warning on', 'Setu locked'][lv]);
+});
+const dlBackup = run(async code => {
+  const r = await fetch('/api/admin/backup', {method: 'POST', headers: {'X-Setu-Admin': KEY, 'Content-Type': 'application/json'}, body: JSON.stringify({code})});
+  if(!r.ok) throw new Error('Backup download failed (HTTP ' + r.status + ')');
+  const url = URL.createObjectURL(await r.blob()), a = document.createElement('a');
+  a.href = url; a.download = `setu-${code}-backup.json`; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  toast('Backup downloaded');
+});
+function delBox(code){
+  const h = hotelBy(code);
+  sheet(`<h2 class="err">Delete hotel?</h2><p><b>${esc(h.name)}</b> (${esc(code)})</p>
+    <p class="muted">Cloud ka saara data, backups, domains aur tickets hamesha ke liye hat jayenge. <b>Wapas nahi aayega.</b> Hotel ke PC ka apna data safe rahega, par wo cloud se alag ho jayega (aur khud naye Hotel Code se dobara jud jayega, jab tak block na karein).</p>
+    <label style="display:flex;gap:8px;align-items:flex-start;margin:10px 0;font-size:13px;color:var(--ink)"><input type="checkbox" id="dbk" style="width:auto;margin-top:3px"><span><b>Is computer ko Block karein</b> (Install ID ${esc(h.iid || '-')}) — wo dobara cloud se nahi jud payega. Baad mein Blocked se hata sakte hain.</span></label>
+    <label>Confirm: Hotel Code type karein (${esc(code)})</label><input id="dc" autocomplete="off" style="text-transform:uppercase">
+    <div class="row" style="margin-top:10px"><button class="bad" onclick="doDelete('${esc(code)}')">Yes, delete</button><button class="g" onclick="closeSheet()">Cancel</button></div>`);
+}
+const doDelete = run(async code => {
+  await api('/api/admin/delete', {code, confirm: $('#dc').value.trim(), block: $('#dbk').checked});
+  toast(code + ' deleted');
+  closeSheet();
+  await drawHotels();
+});
+
+// ----- tickets -----
+let TICKETS = [];
+async function drawTickets(code){
+  TICKETS = (await api('/api/admin/tickets', {code: code || '', read: true})).tickets;
+  await loadHotels();
+  $('#main').innerHTML = `<div class="card"><h2>Help &amp; Support Tickets${code ? ' — ' + esc(hotelBy(code).name) : ''}</h2>
+    ${code ? `<button class="g" onclick="show('tickets')">All hotels</button>` : '<p class="muted" style="margin-top:-6px">Hotels write from Setu → Help &amp; Support (1). Your reply shows there.</p>'}
+    ${TICKETS.map(t => `<div class="hcard" style="cursor:pointer" onclick="ticketBox('${esc(t.id)}')"><b>${esc(t.subject)}</b> ${t.unread_admin ? '<span class="badge">new</span>' : ''} ${pill(t.status === 'resolved' ? 'active' : 'pending').replace(/>(active|pending)</, '>' + (t.status === 'resolved' ? 'resolved' : 'open') + '<')}
+      <div class="muted" style="font-size:12px">${esc(t.hotel_name || hotelBy(t.code).name)} · <code>${esc(t.code)}</code> · ${dt(t.updated)}</div>
+      <div class="muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(((t.msgs || []).slice(-1)[0] || {}).text || '')}</div></div>`).join('') || '<p class="muted">No tickets yet.</p>'}</div>`;
+}
+const hotelTickets = run(async code => { VIEW = 'tickets'; nav(); await drawTickets(code); });
+function ticketBox(id){
+  const t = TICKETS.find(x => x.id === id);
+  if(!t) return;
+  sheet(`<h2>${esc(t.subject)}</h2><p class="muted">${esc(t.hotel_name || hotelBy(t.code).name)} · <code>${esc(t.code)}</code> · ${esc(t.status)}</p>
+    <div>${(t.msgs || []).map(m => `<div class="msg ${m.by}">${esc(m.text)}<small>${m.by === 'admin' ? 'You' : 'Hotel'} · ${dt(m.at)}</small></div>`).join('')}</div>
+    <label>Reply</label><textarea id="rp" rows="3" placeholder="Type your reply to the hotel"></textarea>
+    <div class="row" style="margin-top:10px"><button onclick="sendReply('${esc(id)}', false)">Send reply</button><button class="g" onclick="sendReply('${esc(id)}', true)">Reply &amp; resolve</button>
+      <button class="g" onclick="toggleTicket('${esc(id)}')">${t.status === 'resolved' ? 'Reopen' : 'Mark resolved'}</button><button class="g" onclick="closeSheet()">Close</button></div>`);
+}
+const sendReply = run(async (id, resolve) => {
+  const t = TICKETS.find(x => x.id === id), reply = $('#rp').value.trim();
+  if(!reply && !resolve) return toast('Write a reply');
+  await api('/api/admin/ticket', {code: t.code, id, reply, status: resolve ? 'resolved' : undefined});
+  toast('Sent'); closeSheet(); await drawTickets();
+});
+const toggleTicket = run(async id => {
+  const t = TICKETS.find(x => x.id === id);
+  await api('/api/admin/ticket', {code: t.code, id, status: t.status === 'resolved' ? 'open' : 'resolved'});
+  toast('Updated'); closeSheet(); await drawTickets();
+});
+
+// ----- blocked computers -----
+async function drawBlocked(){
+  const L = (await api('/api/admin/blocked')).blocked || [];
+  $('#main').innerHTML = `<div class="card"><h2>Blocked computers</h2><p class="muted" style="margin-top:-6px">These Install IDs cannot join Setu Cloud again (blocked when the hotel was deleted).</p>
+    ${L.map(b => `<div class="row" style="justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line)"><span><b>${esc(b.name || b.code)}</b><br><span class="muted"><code>${esc(b.iid)}</code> · ${esc(b.code)} · ${d8(b.at)}</span></span>
+      <button class="g" onclick="unblock('${esc(b.iid)}')">Unblock</button></div>`).join('') || '<p class="muted">No blocked computer.</p>'}</div>`;
+}
+const unblock = run(async iid => { await api('/api/admin/unblock', {iid}); toast('Unblocked'); await drawBlocked(); });
 
 // ---------------- add hotel (onboarding) ----------------
 function drawAdd(){

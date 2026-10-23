@@ -602,6 +602,8 @@ class CloudSync:
                 # Turned off by the owner ("enabled": false) = stay off
                 # Every save wakes this loop: try at most once a minute then, else every 30 minutes
                 gap = time.time() - last_try
+                if getattr(self, 'relink_at', 0) > last_try:
+                    gap = AUTO_LINK_EVERY + 1
                 if self.cfg.get('enabled', True) and self.auto.get('state') != 'linked' and \
                         ((woken and gap > 60) or gap > AUTO_LINK_EVERY):
                     last_try = time.time()
@@ -625,8 +627,28 @@ class CloudSync:
                     self.store.log('CLOUD SYNC: ' + msg)
                 self.status.update(ok=False, at=int(time.time() * 1000), error=msg)
 
+    def support(self, method, path, body=None):
+        # Help & Support tickets go to the vendor through this PC's cloud link
+        if not self.configured():
+            raise ValueError('Help & Support ke liye ye PC Setu Cloud se juda hona chahiye (Settings → Setu Cloud)')
+        code, text = self._request(method, path, json.dumps(body) if body is not None else None)
+        try:
+            return code, json.loads(text or '{}')
+        except ValueError:
+            return code, {'error': f'Cloud HTTP {code}'}
+
     def _tick(self):
         code, text = self._request('GET', '/api/version')
+        if code == 404:
+            # The vendor deleted this hotel on the cloud: forget the link, join again (unless blocked)
+            self.store.log(f"Setu Cloud: hotel {self.cfg.get('hotel')} not found on the cloud, joining again")
+            self.cfg = {'enabled': True}
+            _write_json(self.cfg_path, self.cfg)
+            self.state = {}
+            _write_json(self.state_path, self.state)
+            self.auto = {'state': '', 'code': '', 'at': 0}
+            self.relink_at = time.time()   # join again soon, not after the usual 30 minutes
+            raise OSError('Hotel cloud par nahi mila, dobara jud rahe hain')
         if code != 200:
             raise OSError('Invalid Cloud Sync Key' if code == 401 else f'Cloud HTTP {code}')
         cv = json.loads(text)['version']
@@ -750,6 +772,16 @@ def make_handler(base_dir, store, port, cloud=None):
                 return self.send_json(200, cloud.public() if cloud else {'configured': False})
             if path == '/api/info':
                 return self.send_json(200, {'setu': True, 'port': port, 'ips': lan_ips(), 'local': self.is_local()})
+            if path == '/api/support/tickets':
+                if self.role() not in ('local', 'admin') or not cloud:
+                    return self.send_json(403, {'error': 'manager only'})
+                try:
+                    code, j = cloud.support('GET', path)
+                except ValueError as e:
+                    return self.send_json(400, {'error': str(e)})
+                except Exception:
+                    return self.send_json(502, {'error': 'Cloud se jud nahi paye. Internet check karein.'})
+                return self.send_json(code, j)
             if not self.role():
                 return self.send_json(401, {'error': 'pin required'})
             if path == '/api/version':
@@ -779,6 +811,16 @@ def make_handler(base_dir, store, port, cloud=None):
                 role, name = found
                 token = store.add_token(role)
                 return self.send_json(200, {'token': token, 'role': role, 'name': name})
+            if path == '/api/support/ticket':
+                if self.role() not in ('local', 'admin') or not cloud:
+                    return self.send_json(403, {'error': 'manager only'})
+                try:
+                    code, j = cloud.support('POST', path, self.read_json())
+                except ValueError as e:
+                    return self.send_json(400, {'error': str(e)})
+                except Exception:
+                    return self.send_json(502, {'error': 'Cloud se jud nahi paye. Internet check karein.'})
+                return self.send_json(code, j)
             if path in ('/api/cloud/restore', '/api/cloud/join'):
                 if not self.is_local() or not cloud:
                     return self.send_json(403, {'error': 'main counter only'})

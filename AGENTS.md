@@ -71,7 +71,7 @@ Rebuild the EXE on Windows with `Build-New-EXE.bat`.
   `SCREENS` maps each screenKey to a render function. `go(key)` checks auth and license, then renders
   into `#main`. Screens are plain functions that set `main.innerHTML` from template strings.
   A new screen needs a `MENU` row, a `SCREENS` entry and a `scrXxx()` function.
-  Hotkeys must be unique. Letters already used: B Z L P E I D C W S M T Q R A O N H X F U Y V K G. Free: J.
+  Hotkeys must be unique. All 26 letters are used; `1` = Help & Support. Use another digit for a new screen.
 - **UI helpers:** `modal(title, html)`, `closeModal()`, `tryCloseModal()`, `toast(msg)`,
   `waOpen(phone, text)`, `waOwner(text)`, `printDoc([htmlParts])`.
   Money is formatted with `money()` / `rs()` and rounded with `r2()`. Dates are `YYYY-MM-DD` strings from `today()`.
@@ -110,6 +110,12 @@ Rebuild the EXE on Windows with `Build-New-EXE.bat`.
   `/api/counter/restore` (Hotel Code + owner password -> new Sync Key; `restore` flag makes the first sync take the
   cloud copy but keep this PC's Install ID and licence). Joined hotels have `plan: 'counter'`; `/api/counter/license`
   moves `paidUntil` to the newest signed key. Deploy: `.github/workflows/setu-cloud-deploy.yml`.
+- **Super Admin (Library ERP style):** hotel cards sorted by urgency (licence / payment <= 5 days, tickets, stale
+  backup) with Call / WhatsApp. Message (`account.notice`) and Warning / Lock (`account.lock`, lv 1 banner, lv 2 full
+  lock, data untouched) reach the app as `D.saas.notice` / `D.saas.lock` (`saasNotices()`). Help & Support tickets
+  live in the registry `ticket` table (`/api/support/*` on the hotel, proxied by `app_main.py` for the counter).
+  Delete (`/api/admin/delete`, type the code) can block the Install ID (registry `blocked`); a deleted hotel's
+  counter gets 404 and joins again unless blocked.
 - **Setu Pro config in the app:** `featureOn()` / `screenOn()` hide modules (`FEATURE_SCREENS`, `drawSide`, `go`). `applySaas()` (in
   `ensureGrowth`) maps the bill template and rules onto `settings`. `billFields()` = custom bill fields (`B.extra` -> `bill.extra`,
   printed by `billHTML` / `escBill`). `saasRules().phoneAbove` needs a mobile on big bills. Support links (`#support=CODE.TOKEN`) open a
