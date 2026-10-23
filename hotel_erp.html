@@ -1687,6 +1687,8 @@ function setLoginRole(role){
     fAdmin.style.display = role === 'admin' ? 'block' : 'none';
     fCashier.style.display = role === 'cashier' ? 'block' : 'none';
   }
+  // Hidden Manager fields must not stay "required", or the browser silently blocks the Cashier sign-in
+  ['#login_user_id', '#login_pin'].forEach(id => { const el = $(id); if(el) el.required = role === 'admin'; });
   const err = $('#login_err');
   if(err) err.style.display = 'none';
   if(role === 'admin'){
