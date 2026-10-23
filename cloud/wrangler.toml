@@ -1,0 +1,55 @@
+# Setu Cloud SaaS - Cloudflare Worker config (one deploy serves every hotel)
+# Powered by Aghanya Devanya Enterprises
+name = "setu-cloud"
+main = "src/worker.js"
+compatibility_date = "2025-09-01"
+
+# App files + vendor admin page. "npm run assets" copies an allow-list into ./public.
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = ["/api/*", "/"]
+
+[vars]
+TRIAL_DAYS = "14"
+TRIAL_TIER = "premium"
+# Razorpay plans: one per tier x cycle. Plan ids from Razorpay Dashboard -> Subscriptions -> Plans.
+# price in rupees (display), days = license days added per paid cycle, tier = basic / premium / diamond.
+PLANS = """{
+  "basic_monthly":   {"tier":"basic",   "label":"Basic Monthly",   "price":999,   "days":30,  "razorpay":"plan_PASTE_ID"},
+  "basic_yearly":    {"tier":"basic",   "label":"Basic Yearly",    "price":9999,  "days":365, "razorpay":"plan_PASTE_ID"},
+  "premium_monthly": {"tier":"premium", "label":"Premium Monthly", "price":1999,  "days":30,  "razorpay":"plan_PASTE_ID"},
+  "premium_yearly":  {"tier":"premium", "label":"Premium Yearly",  "price":19999, "days":365, "razorpay":"plan_PASTE_ID"},
+  "diamond_monthly": {"tier":"diamond", "label":"Diamond Monthly", "price":2999,  "days":30,  "razorpay":"plan_PASTE_ID"},
+  "diamond_yearly":  {"tier":"diamond", "label":"Diamond Yearly",  "price":29999, "days":365, "razorpay":"plan_PASTE_ID"}
+}"""
+
+# ---- Domains (optional) ----
+# BASE_DOMAIN: your own domain on Cloudflare, e.g. "setupro.in". Hotels then get <slug>.setupro.in
+#   (add the route below as well). APP_HOST: the main app address, e.g. "app.setupro.in".
+# SAAS_CNAME_TARGET: where a hotel's own domain must point (Cloudflare for SaaS fallback origin),
+#   e.g. "customers.setupro.in". Custom domains also need secrets CF_API_TOKEN + CF_ZONE_ID.
+BASE_DOMAIN = ""
+APP_HOST = ""
+SAAS_CNAME_TARGET = ""
+# routes = [ { pattern = "app.setupro.in", custom_domain = true }, { pattern = "*.setupro.in/*", zone_name = "setupro.in" } ]
+
+# Secrets (npm run secret <NAME>): LICENSE_PRIVATE_KEY (npm run license-key), ADMIN_KEY,
+# RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET, CF_API_TOKEN, CF_ZONE_ID
+
+# Every hotel = one Durable Object with its own SQLite database
+[[durable_objects.bindings]]
+name = "HOTEL"
+class_name = "SetuHotel"
+
+# Hotel list for sign-up and the vendor admin page
+[[durable_objects.bindings]]
+name = "REGISTRY"
+class_name = "SetuRegistry"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SetuHotel", "SetuRegistry"]
+
+[observability]
+enabled = true

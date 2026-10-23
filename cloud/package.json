@@ -1,0 +1,16 @@
+{
+  "name": "setu-cloud",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "assets": "node scripts/copy-assets.mjs",
+    "dev": "node scripts/copy-assets.mjs && wrangler dev",
+    "deploy": "node scripts/copy-assets.mjs && wrangler deploy",
+    "license-key": "node scripts/put-license-key.mjs",
+    "secret": "wrangler secret put",
+    "new-key": "node -e \"console.log(require('crypto').randomBytes(24).toString('hex'))\""
+  },
+  "devDependencies": {
+    "wrangler": "^4.40.0"
+  }
+}

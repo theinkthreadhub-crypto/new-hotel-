@@ -1,0 +1,25 @@
+{
+  "name": "Setu — Restaurant & Hotel POS",
+  "short_name": "Setu",
+  "description": "Setu: Complete Restaurant, Hotel Billing, Tables & Online Orders Management System - Powered by Aghanya Devanya Enterprises",
+  "start_url": "hotel_erp.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f172a",
+  "theme_color": "#0284c7",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

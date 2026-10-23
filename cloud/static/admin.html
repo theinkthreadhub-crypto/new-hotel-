@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Setu Pro Super Admin</title>
+<link rel="manifest" href="admin.webmanifest">
+<meta name="theme-color" content="#0ea5e9">
+<link rel="icon" href="favicon.ico">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  :root{ --bg:#f1f5f9; --card:#fff; --ink:#0f172a; --muted:#64748b; --line:#e2e8f0; --pri:#0ea5e9; --pri-ink:#fff; --ok:#16a34a; --bad:#dc2626; --warn:#d97706; --soft:#f8fafc; }
+  @media (prefers-color-scheme: dark){ :root{ --bg:#0b1220; --card:#111a2e; --ink:#e2e8f0; --muted:#94a3b8; --line:#1e293b; --soft:#0f172a; } }
+  *{ box-sizing:border-box }
+  body{ margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 system-ui, -apple-system, Segoe UI, sans-serif }
+  header{ padding:12px 16px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; border-bottom:1px solid var(--line); background:var(--card); position:sticky; top:0; z-index:5 }
+  h1{ font-size:17px; margin:0 } h2{ font-size:16px; margin:0 0 10px } h3{ font-size:14px; margin:16px 0 8px }
+  nav{ display:flex; gap:4px; margin-left:auto; flex-wrap:wrap }
+  nav button{ background:transparent; color:var(--ink); border:1px solid transparent }
+  nav button.on{ background:var(--pri); color:var(--pri-ink) }
+  main{ padding:16px; max-width:1240px; margin:0 auto }
+  input, button, select, textarea{ font:inherit; padding:7px 10px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--ink) }
+  button{ cursor:pointer; background:var(--pri); color:var(--pri-ink); border:0; font-weight:600 }
+  button.g{ background:transparent; color:var(--ink); border:1px solid var(--line) }
+  button.bad{ background:var(--bad); color:#fff }
+  button:disabled{ opacity:.5; cursor:default }
+  label{ display:block; font-size:12px; color:var(--muted); margin-bottom:3px }
+  .card{ background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:14px }
+  .grid{ display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); gap:10px }
+  .grid > div > input, .grid > div > select{ width:100% }
+  .stats{ display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin-bottom:14px }
+  .stat{ background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px }
+  .stat b{ display:block; font-size:22px }
+  .wrap{ overflow-x:auto; background:var(--card); border:1px solid var(--line); border-radius:12px }
+  table{ width:100%; border-collapse:collapse }
+  .wrap table{ min-width:860px }
+  th, td{ text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); vertical-align:middle }
+  th{ font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em }
+  tr.click{ cursor:pointer } tr.click:hover td{ background:var(--soft) }
+  .pill{ padding:2px 8px; border-radius:99px; font-size:12px; font-weight:700; white-space:nowrap }
+  .p-active{ background:#dcfce7; color:#166534 } .p-trial{ background:#e0f2fe; color:#075985 }
+  .p-expired{ background:#fee2e2; color:#991b1b } .p-suspended{ background:#e2e8f0; color:#334155 } .p-pending{ background:#fef3c7; color:#92400e }
+  .h-ok{ background:#dcfce7; color:#166534 } .h-warn{ background:#fef3c7; color:#92400e } .h-bad{ background:#fee2e2; color:#991b1b }
+  .muted{ color:var(--muted) } .row{ display:flex; gap:8px; flex-wrap:wrap; align-items:center }
+  .tabs{ display:flex; gap:4px; border-bottom:1px solid var(--line); margin:12px 0; overflow-x:auto }
+  .tabs button{ background:transparent; color:var(--muted); border-radius:8px 8px 0 0; white-space:nowrap }
+  .tabs button.on{ color:var(--ink); background:var(--soft); border:1px solid var(--line); border-bottom-color:var(--soft) }
+  .feat{ display:flex; align-items:center; gap:10px; padding:8px 10px; border:1px solid var(--line); border-radius:10px; background:var(--soft) }
+  .feat select{ margin-left:auto }
+  .two{ display:grid; grid-template-columns:1fr 300px; gap:16px } @media (max-width:820px){ .two{ grid-template-columns:1fr } }
+  .rcpt{ background:#fff; color:#000; font:12px/1.35 ui-monospace, Consolas, monospace; padding:10px; border:1px dashed #94a3b8; margin:0 auto }
+  .rcpt .c{ text-align:center } .rcpt hr{ border:0; border-top:1px dashed #000 } .rcpt .r{ text-align:right } .rcpt td{ padding:1px 0; border:0 }
+  #drawer{ position:fixed; inset:0; background:rgba(15,23,42,.55); display:none; z-index:10; overflow:auto; padding:20px 12px }
+  #drawer .panel{ max-width:980px; margin:0 auto; background:var(--card); border-radius:14px; padding:18px; border:1px solid var(--line) }
+  #login{ max-width:380px; margin:60px auto }
+  #login input{ width:100%; margin:10px 0 }
+  .err{ color:var(--bad); font-weight:600 } .ok{ color:var(--ok); font-weight:600 }
+  code{ font:12px ui-monospace, Consolas, monospace; background:var(--soft); padding:1px 5px; border-radius:5px; word-break:break-all }
+  #toast{ position:fixed; bottom:16px; left:50%; transform:translateX(-50%); background:#0f172a; color:#fff; padding:9px 16px; border-radius:10px; display:none; z-index:20 }
+</style>
+</head>
+<body>
+<div id="login" class="card">
+  <h1>Setu Pro Super Admin</h1>
+  <p class="muted">Aghanya Devanya Enterprises — vendor access only</p>
+  <form id="lf"><input id="key" type="password" placeholder="Admin Key" autocomplete="off" required>
+    <label style="display:flex;gap:8px;align-items:center;margin:0 0 10px;font-size:13px"><input id="remember" type="checkbox" style="width:auto;margin:0"> Remember on this device (only your own phone)</label>
+    <button style="width:100%">Open</button></form>
+  <p id="lerr" class="err"></p>
+</div>
+
+<div id="app" hidden>
+  <header>
+    <h1>Setu Pro Super Admin</h1>
+    <nav id="nav"></nav>
+    <button class="g" onclick="logout()">Logout</button>
+  </header>
+  <main id="main"></main>
+</div>
+<div id="drawer"><div class="panel" id="panel"></div></div>
+<div id="toast"></div>
+
+<script>
+let KEY = '', META = null, HOTELS = [], VIEW = 'dash', CUR = null, TAB = 'overview';
+// Remembered only on a device the vendor ticked (e.g. the Setu Admin phone app)
+try{ KEY = sessionStorage.getItem('setu_admin') || localStorage.getItem('setu_admin') || ''; }catch(e){}
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const d8 = ms => ms ? new Date(ms).toLocaleDateString('en-IN', {day:'2-digit', month:'short', year:'numeric'}) : '-';
+const dt = ms => ms ? new Date(ms).toLocaleString('en-IN', {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'}) : '-';
+const rs = n => '₹' + Math.round(n || 0).toLocaleString('en-IN');
+const state = h => h.status === 'suspended' ? 'suspended' : ((h.paid_until ?? h.paidUntil) < Date.now() && !h.lifetime ? 'expired' : h.status);
+const pill = s => `<span class="pill p-${esc(s)}">${esc(s)}</span>`;
+const ago = ms => { const m = Math.round((Date.now() - ms) / 60000); return m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : Math.round(m / 1440) + ' days ago'; };
+// Backup health = when the hotel's data last reached the cloud
+const health = ms => !ms ? '<span class="pill h-bad">No backup yet</span>'
+  : Date.now() - ms < 26 * 36e5 ? `<span class="pill h-ok">OK · ${ago(ms)}</span>`
+  : Date.now() - ms < 72 * 36e5 ? `<span class="pill h-warn">${ago(ms)}</span>`
+  : `<span class="pill h-bad">${ago(ms)}</span>`;
+const backupIssue = h => state(h) !== 'suspended' && (!h.seen || Date.now() - h.seen > 48 * 36e5);
+function toast(t){ const e = $('#toast'); e.textContent = t; e.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(() => e.style.display = 'none', 2600); }
+
+async function api(path, body){
+  const r = await fetch(path, {method: 'POST', headers: {'X-Setu-Admin': KEY, 'Content-Type': 'application/json'}, body: JSON.stringify(body || {})});
+  if(r.status === 401) throw new Error('Invalid Admin Key');
+  const j = await r.json().catch(() => ({}));
+  if(!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+const run = fn => async (...a) => { try{ await fn(...a); }catch(e){ alert(e.message); } };
+
+// ---------------- navigation ----------------
+const VIEWS = {dash: 'Dashboard', hotels: 'Hotels', add: '+ New Hotel', audit: 'Audit Log'};
+function nav(){
+  $('#nav').innerHTML = Object.entries(VIEWS).map(([k, v]) => `<button class="${VIEW === k ? 'on' : ''}" onclick="show('${k}')">${v}</button>`).join('');
+}
+const show = run(async v => { VIEW = v; nav(); await ({dash: drawDash, hotels: drawHotels, add: drawAdd, audit: drawAudit})[v](); });
+
+async function loadHotels(){ HOTELS = (await api('/api/admin/hotels')).hotels; }
+
+// ---------------- dashboard ----------------
+async function drawDash(){
+  await loadHotels();
+  const st = await api('/api/admin/stats');
+  const c = s => HOTELS.filter(h => state(h) === s).length;
+  // Monthly recurring estimate from each paying hotel's monthly price for its tier
+  const monthly = t => { const p = Object.values(META.plans).find(x => x.tier === t && x.days <= 31); return p ? p.price : 0; };
+  const mrr = HOTELS.filter(h => state(h) === 'active').reduce((a, h) => a + monthly(h.tier), 0);
+  const month = Date.now() - 30 * 864e5;
+  const soon = HOTELS.filter(h => ['active', 'trial'].includes(state(h)) && h.paid_until - Date.now() < 7 * 864e5).sort((a, b) => a.paid_until - b.paid_until);
+  $('#main').innerHTML = `
+    <div class="stats">${[['Total Hotels', HOTELS.length], ['Paid', c('active')], ['Trial', c('trial')], ['Expired', c('expired')], ['Suspended', c('suspended')],
+      ['New (30 days)', HOTELS.filter(h => h.created > month).length], ['Payments (30 days)', rs(st.paid30.s / 100)], ['MRR (estimate)', rs(mrr)]]
+      .map(([k, v]) => `<div class="stat"><span class="muted">${k}</span><b>${v}</b></div>`).join('')}</div>
+    <div class="two">
+      <div class="card"><h2>Expiring within 7 days</h2>
+        <table><tr><th>Hotel</th><th>Status</th><th>Valid until</th><th>Mobile</th></tr>
+        ${soon.map(h => `<tr class="click" onclick="openHotel('${esc(h.code)}')"><td><b>${esc(h.name)}</b> <span class="muted">${esc(h.code)}</span></td><td>${pill(state(h))}</td><td>${d8(h.paid_until)}</td><td>${esc(h.phone)}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">None</td></tr>'}</table>
+      </div>
+      <div class="card"><h2>Backup issues</h2><p class="muted" style="margin-top:-6px">No data from the counter PC for 2+ days</p>
+        <table>${HOTELS.filter(backupIssue).map(h => `<tr class="click" onclick="openHotel('${esc(h.code)}')"><td><b>${esc(h.name)}</b> <span class="muted">${esc(h.code)}</span></td><td>${health(h.seen)}</td><td>${esc(h.phone)}</td></tr>`).join('') || '<tr><td class="ok">All hotels are backing up</td></tr>'}</table>
+      </div>
+      <div class="card"><h2>Recent payments</h2>
+        <table>${st.recent.map(p => `<tr><td>${esc(p.name || p.code)}<div class="muted">${esc(p.plan)} · ${dt(p.at)}</div></td><td class="r">${p.amount ? rs(p.amount / 100) : '<span class="muted">manual</span>'}</td></tr>`).join('') || '<tr><td class="muted">None yet</td></tr>'}</table>
+      </div>
+    </div>`;
+}
+
+// ---------------- hotels list ----------------
+async function drawHotels(){
+  await loadHotels();
+  $('#main').innerHTML = `
+    <div class="row" style="margin-bottom:10px"><input id="q" placeholder="Search name / code / mobile / Install ID / domain" style="flex:1;min-width:220px">
+      <select id="fs"><option value="">All statuses</option><option>active</option><option>trial</option><option>expired</option><option>suspended</option></select></div>
+    <div class="wrap"><table><thead><tr><th>Hotel</th><th>Code / Install ID</th><th>Type / Plan</th><th>Owner</th><th>Status</th><th>Backup</th><th>Paid Till</th><th>Domain</th><th>Joined</th></tr></thead><tbody id="rows"></tbody></table></div>`;
+  $('#q').oninput = $('#fs').onchange = rows;
+  rows();
+}
+function rows(){
+  const q = $('#q').value.trim().toLowerCase(), f = $('#fs').value;
+  const list = HOTELS.filter(h => (!f || state(h) === f) && (!q || [h.name, h.code, h.phone, h.owner, h.iid || '', ...(h.domains || []).map(d => d.host)].join(' ').toLowerCase().includes(q)));
+  $('#rows').innerHTML = list.map(h => `<tr class="click" onclick="openHotel('${esc(h.code)}')">
+    <td><b>${esc(h.name)}</b><div class="muted">${esc(h.email || '')}</div></td><td><code>${esc(h.code)}</code><div class="muted" style="font-size:11px">${h.iid ? esc(h.iid) : 'no Install ID yet'}</div></td>
+    <td>${esc((META.templates[h.btype] || {}).label || h.btype || '-')}<div class="muted">${esc((META.tiers[h.tier] || {}).label || '-')}</div></td>
+    <td>${esc(h.owner)}<div class="muted">${esc(h.phone)}</div></td><td>${pill(state(h))}</td><td>${health(h.seen)}</td><td>${d8(h.paid_until)}</td>
+    <td>${(h.domains || []).map(d => `<div>${esc(d.host)} ${d.status !== 'active' ? pill('pending') : ''}</div>`).join('') || '<span class="muted">-</span>'}</td><td>${d8(h.created)}</td></tr>`).join('')
+    || '<tr><td colspan="9" class="muted">No hotels</td></tr>';
+}
+
+// ---------------- add hotel (onboarding) ----------------
+function drawAdd(){
+  const tpl = Object.entries(META.templates).map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join('');
+  const tiers = Object.entries(META.tiers).map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join('');
+  $('#main').innerHTML = `<div class="card"><h2>Create New Hotel</h2>
+    <p class="muted">Customer → Business Type → Plan → Features → Login. The hotel signs in the first time with the Hotel Code and this password, then builds its own data.</p>
+    <form id="af"><div class="grid">
+      <div><label>Hotel / Restaurant name *</label><input name="name" required></div>
+      <div><label>Owner name *</label><input name="owner" required></div>
+      <div><label>Mobile (10 digit) *</label><input name="phone" required pattern="[0-9]{10}" inputmode="numeric"></div>
+      <div><label>Email</label><input name="email" type="email"></div>
+      <div><label>GSTIN (optional)</label><input name="gstin" maxlength="15" style="text-transform:uppercase"></div>
+      <div><label>Business Type (Template)</label><select name="businessType" id="a_type">${tpl}</select></div>
+      <div><label>Plan</label><select name="tier" id="a_tier">${tiers}</select></div>
+      <div><label>Days</label><input name="days" type="number" min="1" max="3650" value="${META.trialDays}"></div>
+      <div><label>Payment</label><select name="paid"><option value="">Free trial</option><option value="1">Paid (cash / UPI received)</option></select></div>
+      <div><label>Owner initial password (6+ characters) *</label><input name="password" required minlength="6"></div>
+    </div><div class="row" style="margin-top:12px"><button>Create Hotel</button><span id="ares"></span></div></form></div>`;
+  $('#a_type').onchange = () => $('#a_tier').value = META.templates[$('#a_type').value].tier;
+  $('#a_type').onchange();
+  $('#af').onsubmit = run(async e => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    f.paid = !!f.paid;
+    const gstin = (f.gstin || '').trim(); delete f.gstin;
+    $('#ares').innerHTML = '<span class="muted">Creating…</span>';
+    let j;
+    try{ j = await api('/api/admin/create', f); }catch(err){ $('#ares').innerHTML = `<span class="err">${esc(err.message)}</span>`; throw err; }
+    if(gstin) await api('/api/admin/hotel', {code: j.code, update: {profile: {gstin}}});
+    $('#main').innerHTML = `<div class="card"><h2 class="ok">Hotel created: ${esc(f.name)}</h2>
+      <p>Send this to the owner (WhatsApp):</p>
+      <div class="card" style="background:var(--soft)">Link: <code>${esc(location.origin)}/hotel_erp.html</code><br>Hotel Code: <b>${esc(j.code)}</b><br>Password: the one you set<br>
+        Counter PC Sync Key: <code>${esc(j.syncKey)}</code> <span class="muted">(will not be shown again)</span></div>
+      <div class="row"><button onclick="openHotel('${esc(j.code)}')">Open Hotel</button><button class="g" onclick="show('add')">Add Another</button></div></div>`;
+  });
+}
+
+// ---------------- audit ----------------
+async function drawAudit(code){
+  const j = await api('/api/admin/audit', {code: code || ''});
+  const html = `<table><tr><th>When</th><th>Action</th><th>Hotel</th><th>Detail</th><th>By</th></tr>
+    ${j.rows.map(r => `<tr><td>${dt(r.at)}</td><td><b>${esc(r.action)}</b></td><td><code>${esc(r.code)}</code></td><td>${esc(r.detail)}</td><td class="muted">${esc(r.actor)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Nothing yet</td></tr>'}</table>`;
+  if(code) return html;
+  $('#main').innerHTML = `<div class="card"><h2>Super Admin Audit Log</h2><p class="muted">Every change, support session and new hotel is recorded here.</p><div style="overflow-x:auto">${html}</div></div>`;
+}
+
+// ---------------- one hotel ----------------
+const openHotel = run(async code => {
+  CUR = await api('/api/admin/hotel', {code});
+  TAB = 'overview';
+  $('#drawer').style.display = 'block';
+  drawHotel();
+});
+function closeHotel(){ $('#drawer').style.display = 'none'; CUR = null; if(VIEW !== 'add') show(VIEW); }
+const update = run(async (u, msg) => {
+  CUR = await api('/api/admin/hotel', {code: CUR.code, update: u});
+  toast(msg || 'Saved — applies to the hotel devices within seconds');
+  drawHotel();
+});
+
+const TABS = {overview: 'Overview & Subscription', features: 'Plan & Features', billing: 'Billing Builder', rules: 'Rules', domains: 'Domains', support: 'Support', log: 'History'};
+function drawHotel(){
+  const h = CUR;
+  $('#panel').innerHTML = `<div class="row"><div><h2 style="margin:0">${esc(h.name)} <code>${esc(h.code)}</code></h2>
+      <span class="muted">${esc((META.templates[h.businessType] || {}).label || '')} · ${esc(h.tierLabel)} · ${pill(state(h))} · Install ID: <code>${esc((h.counter || {}).installId || '-')}</code></span></div>
+      <button class="g" style="margin-left:auto" onclick="closeHotel()">Close</button></div>
+    <div class="tabs">${Object.entries(TABS).map(([k, v]) => `<button class="${TAB === k ? 'on' : ''}" onclick="TAB='${k}';drawHotel()">${v}</button>`).join('')}</div>
+    <div id="tab"></div>`;
+  ({overview: tabOverview, features: tabFeatures, billing: tabBilling, rules: tabRules, domains: tabDomains, support: tabSupport, log: tabLog})[TAB]();
+}
+
+function tabOverview(){
+  const h = CUR, c = h.counter || {};
+  $('#tab').innerHTML = `
+    <div class="grid">
+      <div><label>Hotel name</label><input id="p_name" value="${esc(h.name)}"></div>
+      <div><label>Owner</label><input id="p_owner" value="${esc(h.owner)}"></div>
+      <div><label>Mobile</label><input id="p_phone" value="${esc(h.phone)}"></div>
+      <div><label>Email</label><input id="p_email" value="${esc(h.email)}"></div>
+      <div><label>GSTIN (optional)</label><input id="p_gst" maxlength="15" style="text-transform:uppercase" value="${esc(h.gstin || '')}" placeholder="${esc(c.hotelGstin || '')}"></div>
+    </div>
+    <div class="row" style="margin-top:8px"><button class="g" onclick="update({profile:{name:p_name.value,owner:p_owner.value,phone:p_phone.value,email:p_email.value,gstin:p_gst.value}})">Save Profile</button></div>
+    <h3>Owner Password</h3>
+    <p class="muted" style="margin-top:-4px">Owner forgot the password? Set a new one: it works on the phone app at once and on the counter PC after its next sync (it is also the Manager PIN there).</p>
+    <div class="row"><input id="o_pw2" placeholder="New owner password (6+ characters)" maxlength="40" style="min-width:240px">
+      <button onclick="ownerPw2()">Set Owner Password</button></div>
+    <h3>Counter PC Connection</h3>
+    <div class="row">Hotel Code: <code style="font-size:14px">${esc(h.code)}</code>
+      Sync Key: ${h.storedSyncKey ? `<code style="font-size:14px">${esc(h.storedSyncKey)}</code><button class="g" onclick="navigator.clipboard.writeText('${esc(h.storedSyncKey)}').then(() => toast('Sync Key copied'))">Copy</button>`
+        : '<span class="muted">not stored (made before this option) — Support tab → New Counter PC Sync Key, or record the current key there</span>'}</div>
+    <div class="row" style="margin-top:6px">Owner password (last set by you): ${h.storedOwnerPass ? `<code style="font-size:14px">${esc(h.storedOwnerPass)}</code>` : '<span class="muted">not stored — set a new one below</span>'}
+      <span class="muted">(if the owner changed it in Setu Settings, theirs is newer)</span></div>
+    ${(h.counter || {}).installId ? '' : `<p class="muted" style="margin:6px 0 0">Install ID appears here after the hotel's Setu connects: Setu → Settings (G) → Setu Cloud Sync → Hotel Code <b>${esc(h.code)}</b> + the Sync Key above → Save &amp; Connect.</p>`}
+    <h3>Counter PC &amp; Backup</h3>
+    <div class="grid">
+      <div class="stat"><span class="muted">Last data received</span><b style="font-size:15px">${health(h.savedAt)}</b><span class="muted">${h.savedAt ? dt(h.savedAt) : 'Counter PC not connected yet'}</span></div>
+      <div class="stat"><span class="muted">Daily cloud backups</span><b>${h.backups.length}</b><span class="muted">${h.backups[0] ? 'Latest: ' + esc(h.backups[0]) : 'Starts from the 2nd day'}</span></div>
+      <div class="stat"><span class="muted">Bills on cloud</span><b>${c.bills}</b><span class="muted">${c.lastBill ? 'Last bill: ' + esc(c.lastBill) : 'No bills yet'} · ${c.menu} menu items</span></div>
+      <div class="stat"><span class="muted">Counter licence</span><b style="font-size:15px">${c.lifetime ? 'Lifetime' : c.licenceUntil ? d8(Date.parse(c.licenceUntil)) : '-'}</b><span class="muted">${esc(c.plan || '')}${c.licenceUntil && !c.lifetime && Date.parse(c.licenceUntil) < Date.now() ? ' · <b class="err">EXPIRED</b>' : ''}</span></div>
+    </div>
+    <h3>Send Activation Key (online)</h3>
+    <p class="muted" style="margin-top:-4px">1. Copy the Install ID → 2. make a key in Setu Keygen (PC or phone) → 3. paste it here. The counter PC activates itself on its next sync (internet needed there).</p>
+    <div class="row">Install ID: <code style="font-size:14px">${esc(c.installId || 'not connected yet')}</code>${c.installId ? `<button class="g" onclick="navigator.clipboard.writeText('${esc(c.installId)}').then(() => toast('Install ID copied'))">Copy</button>` : ''}
+      ${c.keysWaiting ? `<span class="pill h-warn">${c.keysWaiting} key waiting for the counter PC</span>` : ''}</div>
+    <div class="row" style="margin-top:8px"><textarea id="x_key" rows="3" style="flex:1;min-width:260px;font-family:ui-monospace,Consolas,monospace" placeholder="SETU-XXXXXXXX-XXXXXXXX-..."></textarea>
+      <button onclick="if(x_key.value.trim()) update({pushKey:x_key.value.trim()}, 'Key sent — the counter PC activates on its next sync')">Send Key</button></div>
+    <h3>Cloud Subscription</h3>
+    <p>Status: ${pill(state(h))} · Paid till: <b>${h.lifetime ? 'Lifetime' : d8(h.paidUntil)}</b> · Auto-pay: <b>${esc(h.autoPay || '-')}</b> · Data version: ${h.version} (${dt(h.savedAt)})</p>
+    <div class="row">
+      <input id="x_days" type="number" min="1" value="30" style="width:90px"> days
+      <input id="x_amt" type="number" min="0" placeholder="₹ received (optional)" style="width:160px">
+      <button onclick="if(confirm('Add days? The hotel will receive a new license key automatically.')) update({days:+x_days.value, amount:+x_amt.value||0}, 'Days added')">+ Add Days</button>
+      ${h.status === 'suspended' ? `<button class="g" onclick="update({status:'active'})">Activate</button>` : `<button class="bad" onclick="if(confirm('Suspend this hotel? Cloud saving will stop.')) update({status:'suspended'})">Suspend</button>`}
+      <button class="g" onclick="if(confirm('${h.lifetime ? 'Remove lifetime' : 'Give lifetime'}?')) update({lifetime:${!h.lifetime}})">${h.lifetime ? 'Remove Lifetime' : 'Give Lifetime'}</button>
+    </div>
+    <h3>Payments</h3>
+    <table><tr><th>Date</th><th>Plan</th><th>Days</th><th>Amount</th></tr>${h.payments.map(p => `<tr><td>${dt(p.at)}</td><td>${esc(p.plan)}</td><td>${p.days}</td><td>${p.amount ? rs(p.amount / 100) : '-'}</td></tr>`).join('')}</table>`;
+}
+
+function tabFeatures(){
+  const c = CUR.config, ov = c.overrides || {};
+  const tiers = Object.entries(META.tiers).map(([k, v]) => `<option value="${k}" ${k === c.tier ? 'selected' : ''}>${esc(v.label)}</option>`).join('');
+  const tpl = Object.entries(META.templates).map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join('');
+  const inTier = k => META.tiers[c.tier].features.includes(k);
+  $('#tab').innerHTML = `
+    <div class="row"><label style="margin:0">Plan</label><select id="f_tier">${tiers}</select>
+      <button onclick="update({tier:f_tier.value}, 'Plan changed')">Plan Save</button>
+      <span class="muted" style="margin-left:12px">Template:</span><select id="f_tpl">${tpl}</select>
+      <button class="g" onclick="if(confirm('Apply this template? Features, bill template and rules will be reset to the template defaults.')) update({applyTemplate:f_tpl.value}, 'Template applied')">Apply Template</button></div>
+    <h3>Feature Manager</h3>
+    <p class="muted">"Per plan" follows the plan automatically. ON / OFF overrides it for this hotel only. The server does not save data for disabled modules.</p>
+    <div class="grid">${Object.entries(META.features).map(([k, label]) => `<div class="feat">
+      <span>${CUR.features[k] ? '✅' : '⛔'}</span><span>${esc(label)}</span>
+      <select data-f="${k}"><option value="">Per plan (${inTier(k) ? 'ON' : 'OFF'})</option><option value="1" ${ov[k] === true ? 'selected' : ''}>ON</option><option value="0" ${ov[k] === false ? 'selected' : ''}>OFF</option></select></div>`).join('')}</div>
+    <div class="row" style="margin-top:12px"><button onclick="saveFeatures()">Features Save</button></div>`;
+}
+function saveFeatures(){
+  const o = {};
+  document.querySelectorAll('[data-f]').forEach(s => { if(s.value) o[s.dataset.f] = s.value === '1'; });
+  update({overrides: o}, 'Features save — hotel par lag gaye');
+}
+
+function tabBilling(){
+  const b = CUR.config.billing;
+  $('#tab').innerHTML = `<div class="two"><div>
+    <div class="grid">
+      <div><label>Paper</label><select id="b_paper">${[['80', '80 mm Thermal'], ['58', '58 mm Thermal'], ['A6', 'A6 (105 × 148 mm)']].map(([v, l]) => `<option value="${v}" ${b.paper === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      <div><label>Logo URL (https, optional)</label><input id="b_logo" value="${esc(b.logoUrl)}" placeholder="https://..."></div>
+      <div><label><input type="checkbox" id="b_showLogo" ${b.showLogo ? 'checked' : ''}> Logo dikhayein (A6 / print box)</label>
+        <label><input type="checkbox" id="b_table" ${b.showTable ? 'checked' : ''}> Table No dikhayein</label>
+        <label><input type="checkbox" id="b_cust" ${b.showCustomer ? 'checked' : ''}> Customer naam dikhayein</label></div>
+      <div><label>Header line (below the name)</label><input id="b_head" value="${esc(b.headerNote)}" maxlength="100" placeholder="Pure Veg · Since 1998"></div>
+      <div style="grid-column:1/-1"><label>Footer (blank = hotel setting)</label><input id="b_foot" value="${esc(b.footer)}" maxlength="200" style="width:100%"></div>
+    </div>
+    <h3>Custom Fields (bill par, max 6)</h3>
+    <div id="b_fields"></div>
+    <div class="row" style="margin-top:8px"><button class="g" onclick="addField()">+ Field</button><button onclick="saveBilling()">Billing Template Save</button></div>
+    <p class="muted">Existing bills are not changed; the new template applies to new bills only.</p>
+  </div><div><label>Preview</label><div id="b_prev"></div></div></div>`;
+  FIELDS = (b.fields || []).map(f => ({...f}));
+  drawFields();
+  $('#tab').addEventListener('input', preview);
+  $('#tab').addEventListener('change', preview);
+}
+let FIELDS = [];
+function drawFields(){
+  $('#b_fields').innerHTML = FIELDS.map((f, i) => `<div class="row" style="margin-bottom:6px">
+    <input value="${esc(f.label)}" maxlength="30" placeholder="e.g. Vehicle No / Room No" oninput="FIELDS[${i}].label=this.value">
+    <label style="margin:0"><input type="checkbox" ${f.required ? 'checked' : ''} onchange="FIELDS[${i}].required=this.checked"> Zaroori</label>
+    <button class="g" onclick="FIELDS.splice(${i},1);drawFields()">Remove</button></div>`).join('') || '<p class="muted">No custom fields</p>';
+  preview();
+}
+function addField(){ if(FIELDS.length < 6){ FIELDS.push({label: '', required: false}); drawFields(); } }
+function billingForm(){
+  return {paper: $('#b_paper').value, logoUrl: $('#b_logo').value.trim(), showLogo: $('#b_showLogo').checked, showTable: $('#b_table').checked,
+    showCustomer: $('#b_cust').checked, headerNote: $('#b_head').value, footer: $('#b_foot').value, fields: FIELDS.filter(f => f.label.trim())};
+}
+function preview(){
+  const b = billingForm(), w = {58: '200px', 80: '270px', A6: '300px'}[b.paper];
+  const logo = b.showLogo && /^https:\/\//.test(b.logoUrl) ? `<div class="c"><img src="${esc(b.logoUrl)}" alt="" style="max-height:44px;max-width:70%"></div>` : '';
+  $('#b_prev').innerHTML = `<div class="rcpt" style="width:${w}">${logo}<div class="c"><b>${esc(CUR.name)}</b></div><div class="c">Main Road, Shahar</div>
+    ${b.headerNote ? `<div class="c">${esc(b.headerNote)}</div>` : ''}<hr><div class="c"><b>TAX INVOICE</b></div>
+    <div>Bill No: #1024 &nbsp; 09/10/2026 8:15 PM</div>${b.showTable ? '<div>Table/Ref: <b>T-4</b></div>' : ''}${b.showCustomer ? '<div>Customer: Rahul</div>' : ''}
+    ${b.fields.map(f => `<div>${esc(f.label)}: <b>……</b></div>`).join('')}<hr>
+    <table style="width:100%"><tr><td>Paneer Tikka</td><td class="r">1</td><td class="r">240.00</td></tr><tr><td>Butter Naan</td><td class="r">4</td><td class="r">200.00</td></tr></table><hr>
+    <table style="width:100%"><tr><td>Sub Total</td><td class="r">440.00</td></tr><tr><td>CGST @2.5%</td><td class="r">11.00</td></tr><tr><td>SGST @2.5%</td><td class="r">11.00</td></tr><tr><td><b>TOTAL</b></td><td class="r"><b>₹462.00</b></td></tr></table><hr>
+    <div class="c">${esc(b.footer || 'Thank you! Visit again')}</div><div class="c" style="font-size:10px">Powered by Aghanya Devanya Enterprises</div></div>
+    <p class="muted" style="font-size:11px">${b.paper === 'A6' ? 'A6 via print dialog' : b.paper + ' mm thermal'} · the logo does not print in thermal "Direct print" mode</p>`;
+}
+function saveBilling(){ update({billing: billingForm()}, 'Billing template saved — applies to new bills'); }
+
+function tabRules(){
+  const r = CUR.config.rules;
+  $('#tab').innerHTML = `<div class="grid">
+      <div><label>Cashier max discount % (above this needs Manager PIN)</label><input id="r_disc" type="number" min="0" max="100" value="${r.maxDiscPct ?? ''}" placeholder="blank = hotel setting"></div>
+      <div><label>Customer mobile required for bills above ₹</label><input id="r_phone" type="number" min="0" value="${r.phoneAbove ?? ''}" placeholder="blank = off"></div>
+    </div><div class="row" style="margin-top:12px"><button onclick="update({rules:{maxDiscPct:r_disc.value,phoneAbove:r_phone.value}}, 'Rules save')">Rules Save</button></div>
+    <p class="muted">Rules apply to every device of the hotel; cashiers cannot change them in Settings.</p>`;
+}
+
+function tabDomains(){
+  const h = CUR;
+  $('#tab').innerHTML = `
+    <table><tr><th>Domain</th><th>Type</th><th>Status</th><th></th></tr>
+    ${(h.domains || []).map(d => `<tr><td><b>${esc(d.host)}</b>${d.status === 'active' ? ` <a href="https://${esc(d.host)}/hotel_erp.html" target="_blank" rel="noopener">open</a>` : ''}</td><td>${d.kind === 'sub' ? 'Subdomain' : 'Custom'}</td><td>${pill(d.status)}</td>
+      <td class="row">${d.kind === 'custom' ? `<button class="g" onclick="checkDomain('${esc(d.host)}')">Check Status</button>` : ''}<button class="bad" onclick="removeDomain('${esc(d.host)}')">Remove</button></td></tr>`).join('') || '<tr><td colspan="4" class="muted">No domains — the hotel signs in with its Hotel Code</td></tr>'}</table>
+    <div id="dns"></div>
+    <h3>Subdomain ${META.baseDomain ? `(<code>xxx.${esc(META.baseDomain)}</code>)` : ''}</h3>
+    ${META.baseDomain ? `<div class="row"><input id="d_slug" placeholder="royal" style="width:180px"><span>.${esc(META.baseDomain)}</span><button onclick="addDomain('sub', d_slug.value)">Add</button></div>`
+      : '<p class="muted">Set BASE_DOMAIN (your Cloudflare domain) in wrangler.toml.</p>'}
+    <h3>Hotel custom domain</h3>
+    ${META.customDomains ? `<div class="row"><input id="d_host" placeholder="erp.hotelroyal.com" style="width:260px"><button onclick="addDomain('custom', d_host.value)">Add</button></div>
+      <p class="muted">If the hotel already has a website, use a subdomain such as <code>erp.</code> — do not replace the main site.</p>`
+      : '<p class="muted">Requires Cloudflare for SaaS: secrets CF_API_TOKEN + CF_ZONE_ID and var SAAS_CNAME_TARGET.</p>'}`;
+}
+function dnsTable(j){
+  if(!j.records || !j.records.length) return '';
+  return `<div class="card" style="background:var(--soft);margin-top:10px"><b>Add these DNS records at the hotel domain provider:</b>
+    <table><tr><th>Type</th><th>Name</th><th>Value</th></tr>${j.records.map(r => `<tr><td>${esc(r.type)}</td><td><code>${esc(r.name)}</code></td><td><code>${esc(r.value)}</code></td></tr>`).join('')}</table>
+    <p class="muted">The domain goes live once verification and HTTPS are ready (${esc(j.cf || 'pending')} / ssl ${esc(j.ssl || 'pending')}).</p></div>`;
+}
+const addDomain = run(async (kind, value) => {
+  const j = await api('/api/admin/domain/add', {code: CUR.code, kind, value});
+  CUR = await api('/api/admin/hotel', {code: CUR.code});
+  tabDomains();
+  $('#dns').innerHTML = dnsTable(j);
+  toast(j.status === 'active' ? 'Domain live: ' + j.host : 'Add the DNS records, then check the status');
+});
+const checkDomain = run(async host => {
+  const j = await api('/api/admin/domain/check', {code: CUR.code, host});
+  CUR = await api('/api/admin/hotel', {code: CUR.code});
+  tabDomains();
+  $('#dns').innerHTML = dnsTable(j);
+});
+const removeDomain = run(async host => {
+  if(!confirm('Remove ' + host + '? Setu will no longer open from that address.')) return;
+  await api('/api/admin/domain/remove', {code: CUR.code, host});
+  CUR = await api('/api/admin/hotel', {code: CUR.code});
+  tabDomains();
+});
+
+function tabSupport(){
+  $('#tab').innerHTML = `<p>Support Access gives you <b>read-only</b> access to the hotel Setu (nothing is saved). The link expires automatically, and the hotel can see in Settings when support viewed it.</p>
+    <div class="grid"><div><label>Duration</label><select id="s_min"><option value="30">30 minutes</option><option value="60" selected>1 hour</option><option value="120">2 hours</option></select></div>
+      <div style="grid-column:span 2"><label>Reason (visible to the hotel)</label><input id="s_why" maxlength="120" placeholder="e.g. checking a GST report issue" style="width:100%"></div></div>
+    <div class="row" style="margin-top:10px"><button onclick="supportOpen()">Create Support Link</button></div><div id="s_out"></div>
+    <h3>Previous Support Access</h3>
+    ${(CUR.supportLog || []).map(x => `<div>${dt(x.at)} · ${x.minutes} min · ${esc(x.reason || '')}</div>`).join('') || '<p class="muted">Never</p>'}
+    <h3>Lost keys</h3>
+    <p class="muted">New Counter PC Sync Key: the old key stops working; enter the new one on the counter PC (Settings → Setu Cloud Sync). Owner password: works on the phone app at once and on the counter PC after its next sync.</p>
+    <div class="row"><input id="k_set" placeholder="Current Sync Key (40 characters)" maxlength="40" style="min-width:300px"><button class="g" onclick="setSyncKey()">Record This Key</button></div>
+    <div class="row" style="margin-top:8px"><button onclick="newSyncKey()">New Counter PC Sync Key</button>
+      <input id="o_pw" placeholder="New owner password (6+ characters)" maxlength="40"><button onclick="ownerPw()">Reset Owner Password</button></div>
+    <div id="k_out"></div>`;
+}
+const newSyncKey = run(async () => {
+  if(!confirm('Create a new Sync Key? The counter PC must be updated with it.')) return;
+  const j = await api('/api/admin/hotel', {code: CUR.code, update: {newSyncKey: true}});
+  $('#k_out').innerHTML = `<p>Hotel Code: <b>${esc(CUR.code)}</b><br>New Sync Key (shown only now): <b style="font-family:monospace">${esc(j.syncKey || '')}</b></p>`;
+});
+const setSyncKey = run(async () => {
+  const k = $('#k_set').value.trim();
+  if(!k) return;
+  CUR = await api('/api/admin/hotel', {code: CUR.code, update: {setSyncKey: k}});
+  toast('Sync Key recorded');
+  TAB = 'overview'; drawHotel();
+});
+const ownerPw2 = run(async () => {
+  const pw = $('#o_pw2').value.trim();
+  if(!pw) return;
+  if(!confirm('Set this as the new owner password for ' + CUR.name + '?')) return;
+  CUR = await api('/api/admin/hotel', {code: CUR.code, update: {ownerPassword: pw}});
+  toast('Owner password set — tell the owner: ' + pw);
+  drawHotel();
+});
+const ownerPw = run(async () => {
+  const pw = $('#o_pw').value.trim();
+  await api('/api/admin/hotel', {code: CUR.code, update: {ownerPassword: pw}});
+  $('#k_out').innerHTML = '<p>Owner password updated.</p>';
+  $('#o_pw').value = '';
+});
+const supportOpen = run(async () => {
+  if(!$('#s_why').value.trim()) return alert('Please enter a reason (visible to the hotel)');
+  const j = await api('/api/admin/support', {code: CUR.code, minutes: +$('#s_min').value, reason: $('#s_why').value});
+  $('#s_out').innerHTML = `<p class="ok">Link created (${j.minutes} min): <a href="${esc(j.url)}" target="_blank" rel="noopener">Open the hotel Setu</a></p>`;
+});
+
+const tabLog = run(async () => { $('#tab').innerHTML = '<div style="overflow-x:auto">' + await drawAudit(CUR.code) + '</div>'; });
+
+// ---------------- start ----------------
+function logout(){ try{ sessionStorage.removeItem('setu_admin'); localStorage.removeItem('setu_admin'); }catch(e){} location.reload(); }
+async function openPanel(){
+  try{
+    META = await api('/api/admin/meta');
+    try{ sessionStorage.setItem('setu_admin', KEY); if($('#remember') && $('#remember').checked) localStorage.setItem('setu_admin', KEY); }catch(e){}
+    $('#login').hidden = true;
+    $('#app').hidden = false;
+    show('dash');
+  }catch(e){
+    // A remembered key that no longer works must not keep trying (it would lock this device)
+    if(/Invalid Admin Key/.test(e.message)){ try{ sessionStorage.removeItem('setu_admin'); localStorage.removeItem('setu_admin'); }catch(x){} KEY = ''; }
+    $('#lerr').textContent = e.message;
+  }
+}
+$('#lf').onsubmit = e => { e.preventDefault(); KEY = $('#key').value.trim(); openPanel(); };
+$('#drawer').onclick = e => { if(e.target.id === 'drawer') closeHotel(); };
+document.addEventListener('keydown', e => { if(e.key === 'Escape' && CUR) closeHotel(); });
+if(KEY) openPanel();
+</script>
+</body>
+</html>

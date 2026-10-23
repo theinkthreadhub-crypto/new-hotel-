@@ -1,0 +1,7 @@
+# Copy to .dev.vars for local testing ("npm run dev"). Live site: npm run secret <NAME>
+ADMIN_KEY=change-me-long-random
+# Base64 body of setu-license-private.pem (npm run license-key does this for the live site)
+LICENSE_PRIVATE_KEY=
+RAZORPAY_KEY_ID=rzp_test_xxx
+RAZORPAY_KEY_SECRET=xxx
+RAZORPAY_WEBHOOK_SECRET=xxx
