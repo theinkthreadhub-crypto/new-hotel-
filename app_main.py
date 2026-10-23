@@ -732,6 +732,19 @@ def start_server(base_dir, data_dir, port):
     return httpd
 
 
+def keep_server(base_dir, data_dir, port):
+    while True:
+        time.sleep(3)
+        if setu_running(port) or port_busy(port):
+            continue
+        try:
+            start_server(base_dir, data_dir, port)
+            log_line(data_dir, 'Server taken over: the other Setu window was closed')
+            return
+        except OSError:
+            continue   # the old copy still holds the port for a moment
+
+
 def arg(name, default=None):
     if name in sys.argv:
         i = sys.argv.index(name)
@@ -765,6 +778,11 @@ def main():
         start_server(base_dir, data_dir, port)
 
     url = f"http://127.0.0.1:{port}/hotel_erp.html"
+
+    # A second Setu window uses the first one's server. If that first copy is closed, take
+    # the server over, so this window keeps saving (its unsaved edits are pushed on retry).
+    if already and not server_only:
+        threading.Thread(target=keep_server, args=(base_dir, data_dir, port), daemon=True).start()
 
     if server_only:
         if already:
