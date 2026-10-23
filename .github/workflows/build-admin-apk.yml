@@ -1,0 +1,68 @@
+# Builds the Setu Hotel Admin Android app (the vendor's Super Admin on the phone) on GitHub.
+# Download: Releases -> setu-latest -> SetuHotelAdmin.apk. The app only opens Setu Cloud's admin.html,
+# so most changes (cloud/static/admin.html) need no new APK.
+# Same signing key for every build (needed for updates): repo secrets SETU_ADMIN_KEYSTORE (base64 .p12) +
+# SETU_ADMIN_KSPASS. Without them each build gets a new key, and the phone must uninstall the old app first.
+name: Build Setu Admin APK
+
+on:
+  push:
+    paths: ['android-admin/**', '.github/workflows/build-admin-apk.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android-admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Build and sign
+        env:
+          KS_B64: ${{ secrets.SETU_ADMIN_KEYSTORE }}
+          KSPASS: ${{ secrets.SETU_ADMIN_KSPASS }}
+        run: |
+          set -e
+          BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          JAR="$ANDROID_HOME/platforms/$(ls "$ANDROID_HOME/platforms" | grep -E '^android-[0-9]+$' | sort -t- -k2 -n | tail -1)/android.jar"
+          echo "build-tools: $BT  platform: $JAR"
+          B=build; rm -rf $B; mkdir -p $B/classes
+          "$BT/aapt2" compile --dir res -o $B/res.zip
+          "$BT/aapt2" link -o $B/base.apk -I "$JAR" --manifest AndroidManifest.xml $B/res.zip --java $B/gen
+          javac --release 8 -nowarn -cp "$JAR" -d $B/classes $(find src $B/gen -name '*.java')
+          "$BT/d8" --min-api 21 --lib "$JAR" --output $B $(find $B/classes -name '*.class')
+          cp $B/base.apk $B/unsigned.apk && (cd $B && zip -q unsigned.apk classes.dex)
+          "$BT/zipalign" -f 4 $B/unsigned.apk $B/aligned.apk
+          if [ -n "$KS_B64" ] && [ -n "$KSPASS" ]; then
+            echo "$KS_B64" | base64 -d > $B/key.p12
+          else
+            echo "::warning::SETU_ADMIN_KEYSTORE / SETU_ADMIN_KSPASS not set: signing with a one-time key."
+            KSPASS=$(openssl rand -hex 16)
+            keytool -genkeypair -keystore $B/key.p12 -storetype PKCS12 -storepass "$KSPASS" -alias setu -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Setu Hotel Admin, O=Aghanya Devanya Enterprises, C=IN"
+          fi
+          "$BT/apksigner" sign --ks $B/key.p12 --ks-pass "pass:$KSPASS" --out SetuHotelAdmin.apk $B/aligned.apk
+          "$BT/apksigner" verify SetuHotelAdmin.apk
+          rm -f $B/key.p12
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SetuHotelAdmin
+          path: android-admin/SetuHotelAdmin.apk
+          retention-days: 90
+      - name: Add to setu-latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view setu-latest > /dev/null 2>&1; then
+            gh release upload setu-latest SetuHotelAdmin.apk --clobber
+          else
+            gh release create setu-latest SetuHotelAdmin.apk --title "Setu POS - Latest EXE" --notes "Setu Hotel Admin APK" --target "$GITHUB_SHA"
+          fi

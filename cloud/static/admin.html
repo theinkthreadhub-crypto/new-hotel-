@@ -281,8 +281,17 @@ const saveLock = run(async code => {
 const dlBackup = run(async code => {
   const r = await fetch('/api/admin/backup', {method: 'POST', headers: {'X-Setu-Admin': KEY, 'Content-Type': 'application/json'}, body: JSON.stringify({code})});
   if(!r.ok) throw new Error('Backup download failed (HTTP ' + r.status + ')');
-  const url = URL.createObjectURL(await r.blob()), a = document.createElement('a');
-  a.href = url; a.download = `setu-${code}-backup.json`; a.click();
+  const blob = await r.blob(), name = `setu-${code}-backup.json`;
+  // Setu Hotel Admin phone app: hand the file to Android (save to Files / send on WhatsApp, Gmail, Drive)
+  if(window.SA && SA.save){
+    const u = new Uint8Array(await blob.arrayBuffer());
+    let bin = '';
+    for(let i = 0; i < u.length; i += 0x8000) bin += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+    SA.save(name, 'application/json', btoa(bin));
+    return toast('Backup ready — choose where to save / send');
+  }
+  const url = URL.createObjectURL(blob), a = document.createElement('a');
+  a.href = url; a.download = name; a.click();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
   toast('Backup downloaded');
 });
