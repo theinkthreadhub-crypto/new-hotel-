@@ -9,7 +9,7 @@ Every key is tied to one installation: the client reads its Install ID
 
   python keygen.py init                         one time: create the private key (KEEP IT SAFE)
   python keygen.py                              interactive
-  python keygen.py <INSTALL-ID> <plan> [hotel]  plan: 1m 2m 3m 6m 1y life demo1h demo24h
+  python keygen.py <INSTALL-ID> <plan> [hotel]  plan: 1m 2m 3m 6m 1y life demo1h demo24h reset
   python keygen.py verify <KEY> <INSTALL-ID>
 
 Requires: pip install cryptography
@@ -33,7 +33,7 @@ ISSUED_CSV = os.path.join(BASE_DIR, 'Activation_Keys', 'Setu_Issued_Keys.csv')
 EPOCH = datetime.date(2026, 1, 1)
 B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
 
-# kind: 1 = days, 2 = minutes (demo), 3 = lifetime
+# kind: 1 = days, 2 = minutes (demo), 3 = lifetime, 4 = owner password reset (one use, 2 days)
 PLANS = {
     '1m':      (1, 30,  '1 Month (30 Days)'),
     '2m':      (1, 60,  '2 Months (60 Days)'),
@@ -43,6 +43,7 @@ PLANS = {
     'life':    (3, 0,   'Lifetime'),
     'demo1h':  (2, 60,  'Demo (1 Hour)'),
     'demo24h': (2, 1440, 'Demo (24 Hours)'),
+    'reset':   (4, 0,   'Owner Password Reset'),
 }
 
 

@@ -28,6 +28,9 @@ import base64
 import copy
 
 APP_PORT = 8000
+# Setu Cloud the counter PC joins by itself (like Library ERP). SETU_CLOUD_URL overrides it.
+DEFAULT_CLOUD_URL = os.environ.get('SETU_CLOUD_URL', 'https://setu-cloud.theinkthreadhub.workers.dev')
+AUTO_LINK_EVERY = 30 * 60   # seconds between join attempts while offline / not licensed yet
 MAX_BODY = 200 * 1024 * 1024   # 200 MB upper bound for one database upload
 KEEP_BACKUPS = 60              # daily backup files kept
 print_lock = threading.Lock()  # one print job at a time keeps receipts from interleaving
@@ -400,6 +403,16 @@ def _read_json(path, default):
         return default
 
 
+def _key_kind(key):
+    # Byte 1 of a SETU key: 1 days, 2 minutes, 3 lifetime, 4 password reset (not a licence)
+    B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
+    try:
+        bits = ''.join(f'{B32.index(c):05b}' for c in key[4:8])
+        return int(bits[8:16], 2)
+    except ValueError:
+        return 0
+
+
 class CloudBusy(Exception):
     pass
 
@@ -415,6 +428,8 @@ class CloudSync:
         self.cfg = _read_json(self.cfg_path, {})
         self.state = _read_json(self.state_path, {})
         self.status = {'ok': None, 'at': 0, 'error': '', 'cloudVersion': self.state.get('cv', -1)}
+        self.auto = {'state': '', 'code': '', 'at': 0}   # join-by-itself progress, shown in Settings
+        self.link_lock = threading.Lock()                 # the loop and the "Abhi Jodein" button must not both create a hotel
         self.wake = threading.Event()
         threading.Thread(target=self._loop, daemon=True).start()
 
@@ -423,8 +438,109 @@ class CloudSync:
 
     def public(self):
         # The sync key never leaves this PC
-        return {'configured': self.configured(), 'url': self.cfg.get('url', ''), 'hotel': self.cfg.get('hotel', ''),
-                'enabled': self.cfg.get('enabled', True), 'hasKey': bool(self.cfg.get('key')), **self.status}
+        return {'configured': self.configured(), 'url': self.cfg.get('url', '') or DEFAULT_CLOUD_URL, 'hotel': self.cfg.get('hotel', ''),
+                'enabled': self.cfg.get('enabled', True), 'hasKey': bool(self.cfg.get('key')), 'auto': self.auto, **self.status}
+
+    def _license(self):
+        # This PC's newest signed licence key (never the built-in AD-DEMO keys) + Install ID
+        with self.store.lock:
+            d = self.store.data() if self.store.version else None
+        if not isinstance(d, dict):
+            return None, None, {}
+        st, sub = d.get('settings') or {}, d.get('subscription') or {}
+        keys = [k for k in (sub.get('usedKeys') or []) if isinstance(k, str) and k.startswith('SETU') and len(k) >= 128 and _key_kind(k) in (1, 2, 3)]
+        return (keys[-1] if keys else None), st.get('installId'), d
+
+    def _post(self, url, path, obj, hotel=None):
+        headers = {'Content-Type': 'application/json', 'User-Agent': 'Setu-Main-Counter/1.0'}
+        if hotel:
+            headers['X-Setu-Hotel'] = hotel
+        req = urllib.request.Request(url + path, data=json.dumps(obj).encode('utf-8'), method='POST', headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.status, json.loads(r.read().decode('utf-8') or '{}')
+        except urllib.error.HTTPError as e:
+            try:
+                return e.code, json.loads(e.read().decode('utf-8') or '{}')
+            except Exception:
+                return e.code, {}
+
+    def _save_link(self, url, hotel, key, restore=False):
+        self.state = {'restore': True} if restore else {}
+        try:
+            os.remove(self.base_path)
+        except OSError:
+            pass
+        _write_json(self.state_path, self.state)
+        self.cfg = {'url': url, 'hotel': hotel, 'key': key, 'enabled': True}
+        _write_json(self.cfg_path, self.cfg)
+        self.status = {'ok': None, 'at': 0, 'error': '', 'cloudVersion': -1}
+        self.wake.set()
+
+    def auto_link(self):
+        with self.link_lock:
+            self._auto_link()
+
+    def _auto_link(self):
+        # Library ERP style: a licensed counter joins Setu Cloud by itself. Nothing to type.
+        if self.configured():
+            return
+        key, iid, d = self._license()
+        if not key or not iid:
+            self.auto = {'state': 'nolicense', 'code': '', 'at': int(time.time() * 1000)}
+            return
+        # A fresh PC (no menu, no bills) may be meant for "restore from cloud": do not make a new hotel yet
+        if not (d.get('menu') or d.get('bills')):
+            self.auto = {'state': 'waiting', 'code': '', 'at': int(time.time() * 1000)}
+            return
+        st, auth = d.get('settings') or {}, d.get('auth') or {}
+        try:
+            code, j = self._post(DEFAULT_CLOUD_URL, '/api/counter/link', {
+                'installId': iid, 'key': key, 'name': st.get('name') or '', 'owner': auth.get('ownerName') or '',
+                'phone': st.get('phone') or auth.get('phone') or ''})
+        except Exception:
+            self.auto = {'state': 'offline', 'code': '', 'at': int(time.time() * 1000)}
+            return
+        now = int(time.time() * 1000)
+        if code == 200 and j.get('code') and j.get('syncKey'):
+            self.store.log(f"Setu Cloud: joined by itself as {j['code']}")
+            self.auto = {'state': 'joined', 'code': j['code'], 'at': now}
+            self._save_link(DEFAULT_CLOUD_URL, j['code'], j['syncKey'])
+        elif code == 409 and j.get('code'):
+            self.auto = {'state': 'linked', 'code': j['code'], 'at': now}   # needs the owner password (restore)
+        else:
+            self.auto = {'state': 'error', 'code': '', 'at': now, 'error': j.get('error') or f'HTTP {code}'}
+
+    def restore(self, hotel, password):
+        with self.link_lock:
+            self._restore(hotel, password)
+
+    def _restore(self, hotel, password):
+        hotel = ''.join(c for c in (hotel or '').upper() if c.isalnum())
+        if not hotel or not password:
+            raise ValueError('Hotel Code aur owner password dono bharein')
+        _, iid, _ = self._license()
+        try:
+            code, j = self._post(DEFAULT_CLOUD_URL, '/api/counter/restore', {'password': password, 'installId': iid or ''}, hotel=hotel)
+        except Exception:
+            raise ValueError('Cloud se jud nahi paye. Internet check karein.')
+        if code == 404:
+            raise ValueError('Ye Hotel Code cloud par nahi mila')
+        if code != 200 or not j.get('syncKey'):
+            raise ValueError(j.get('error') or f'Cloud HTTP {code}')
+        self.store.log(f'Setu Cloud: restored from {hotel}')
+        self.auto = {'state': 'joined', 'code': hotel, 'at': int(time.time() * 1000)}
+        self._save_link(DEFAULT_CLOUD_URL, hotel, j['syncKey'], restore=True)
+
+    def _push_license(self):
+        # Licence renewed on this PC: the cloud period follows it (the Worker checks the signature)
+        key, _, _ = self._license()
+        if not key or key == self.state.get('lic'):
+            return
+        code, _ = self._request('POST', '/api/counter/license', json.dumps({'key': key}))
+        if code in (200, 400):   # 400 = key the cloud does not accept: do not resend it every few seconds
+            self.state['lic'] = key
+            _write_json(self.state_path, self.state)
 
     def set_config(self, url, hotel, key, enabled=True):
         url = (url or '').strip().rstrip('/')
@@ -477,14 +593,32 @@ class CloudSync:
             return e.code, e.read().decode('utf-8', 'replace')
 
     def _loop(self):
+        last_try = 0
         while True:
             self.wake.wait(5 if self.status.get('ok') is not False else 20)
+            woken = self.wake.is_set()
             self.wake.clear()
             if not self.configured():
+                # Turned off by the owner ("enabled": false) = stay off
+                # Every save wakes this loop: try at most once a minute then, else every 30 minutes
+                gap = time.time() - last_try
+                if getattr(self, 'relink_at', 0) > last_try:
+                    gap = AUTO_LINK_EVERY + 1
+                if self.cfg.get('enabled', True) and self.auto.get('state') != 'linked' and \
+                        ((woken and gap > 60) or gap > AUTO_LINK_EVERY):
+                    last_try = time.time()
+                    try:
+                        self.auto_link()
+                    except Exception as e:
+                        self.store.log('CLOUD AUTO-JOIN: ' + str(e))
                 continue
             try:
                 self._tick()
                 self.status.update(ok=True, at=int(time.time() * 1000), error='')
+                try:
+                    self._push_license()
+                except Exception:
+                    pass
             except CloudBusy:
                 self.wake.set()     # someone wrote in between: try again right away
             except Exception as e:
@@ -493,8 +627,28 @@ class CloudSync:
                     self.store.log('CLOUD SYNC: ' + msg)
                 self.status.update(ok=False, at=int(time.time() * 1000), error=msg)
 
+    def support(self, method, path, body=None):
+        # Help & Support tickets go to the vendor through this PC's cloud link
+        if not self.configured():
+            raise ValueError('Help & Support ke liye ye PC Setu Cloud se juda hona chahiye (Settings → Setu Cloud)')
+        code, text = self._request(method, path, json.dumps(body) if body is not None else None)
+        try:
+            return code, json.loads(text or '{}')
+        except ValueError:
+            return code, {'error': f'Cloud HTTP {code}'}
+
     def _tick(self):
         code, text = self._request('GET', '/api/version')
+        if code == 404:
+            # The vendor deleted this hotel on the cloud: forget the link, join again (unless blocked)
+            self.store.log(f"Setu Cloud: hotel {self.cfg.get('hotel')} not found on the cloud, joining again")
+            self.cfg = {'enabled': True}
+            _write_json(self.cfg_path, self.cfg)
+            self.state = {}
+            _write_json(self.state_path, self.state)
+            self.auto = {'state': '', 'code': '', 'at': 0}
+            self.relink_at = time.time()   # join again soon, not after the usual 30 minutes
+            raise OSError('Hotel cloud par nahi mila, dobara jud rahe hain')
         if code != 200:
             raise OSError('Invalid Cloud Sync Key' if code == 401 else f'Cloud HTTP {code}')
         cv = json.loads(text)['version']
@@ -519,6 +673,12 @@ class CloudSync:
             merged = local
         elif local is None:
             merged = theirs
+        elif self.state.get('restore'):
+            # New / formatted PC: the cloud copy wins, but this PC keeps its own Install ID and licence
+            merged = copy.deepcopy(theirs)
+            merged.setdefault('settings', {})['installId'] = (local.get('settings') or {}).get('installId') or merged['settings'].get('installId')
+            if isinstance(local.get('subscription'), dict):
+                merged['subscription'] = local['subscription']
         else:
             # Cloud as "mine" so bills already printed at this counter keep their numbers
             merged = merge3(base, theirs, local)
@@ -546,7 +706,7 @@ class CloudSync:
             new_lv = self.store.version
         _write_json(self.base_path, merged)
         # lv = -1 tells the next round that this PC still has edits the cloud lacks
-        self.state = {'cv': cv, 'lv': new_lv if jeq(final, merged) else -1}
+        self.state = {'cv': cv, 'lv': new_lv if jeq(final, merged) else -1, **({'lic': self.state['lic']} if self.state.get('lic') else {})}
         _write_json(self.state_path, self.state)
         self.status['cloudVersion'] = cv
 
@@ -612,6 +772,16 @@ def make_handler(base_dir, store, port, cloud=None):
                 return self.send_json(200, cloud.public() if cloud else {'configured': False})
             if path == '/api/info':
                 return self.send_json(200, {'setu': True, 'port': port, 'ips': lan_ips(), 'local': self.is_local()})
+            if path == '/api/support/tickets':
+                if self.role() not in ('local', 'admin') or not cloud:
+                    return self.send_json(403, {'error': 'manager only'})
+                try:
+                    code, j = cloud.support('GET', path)
+                except ValueError as e:
+                    return self.send_json(400, {'error': str(e)})
+                except Exception:
+                    return self.send_json(502, {'error': 'Cloud se jud nahi paye. Internet check karein.'})
+                return self.send_json(code, j)
             if not self.role():
                 return self.send_json(401, {'error': 'pin required'})
             if path == '/api/version':
@@ -641,6 +811,33 @@ def make_handler(base_dir, store, port, cloud=None):
                 role, name = found
                 token = store.add_token(role)
                 return self.send_json(200, {'token': token, 'role': role, 'name': name})
+            if path == '/api/support/ticket':
+                if self.role() not in ('local', 'admin') or not cloud:
+                    return self.send_json(403, {'error': 'manager only'})
+                try:
+                    code, j = cloud.support('POST', path, self.read_json())
+                except ValueError as e:
+                    return self.send_json(400, {'error': str(e)})
+                except Exception:
+                    return self.send_json(502, {'error': 'Cloud se jud nahi paye. Internet check karein.'})
+                return self.send_json(code, j)
+            if path in ('/api/cloud/restore', '/api/cloud/join'):
+                if not self.is_local() or not cloud:
+                    return self.send_json(403, {'error': 'main counter only'})
+                try:
+                    body = self.read_json()
+                    if path == '/api/cloud/restore':
+                        cloud.restore(body.get('hotel'), str(body.get('password') or ''))
+                    else:
+                        if not cloud.cfg.get('enabled', True):
+                            cloud.cfg = {**cloud.cfg, 'enabled': True}
+                            _write_json(cloud.cfg_path, cloud.cfg)
+                        cloud.auto_link()
+                except ValueError as e:
+                    return self.send_json(400, {'error': str(e)})
+                except Exception:
+                    return self.send_json(400, {'error': 'bad request'})
+                return self.send_json(200, cloud.public())
             if path == '/api/cloud':
                 # Cloud URL + sync key are set only from the main counter PC itself
                 if not self.is_local() or not cloud:
@@ -732,6 +929,19 @@ def start_server(base_dir, data_dir, port):
     return httpd
 
 
+def keep_server(base_dir, data_dir, port):
+    while True:
+        time.sleep(3)
+        if setu_running(port) or port_busy(port):
+            continue
+        try:
+            start_server(base_dir, data_dir, port)
+            log_line(data_dir, 'Server taken over: the other Setu window was closed')
+            return
+        except OSError:
+            continue   # the old copy still holds the port for a moment
+
+
 def arg(name, default=None):
     if name in sys.argv:
         i = sys.argv.index(name)
@@ -766,6 +976,11 @@ def main():
 
     url = f"http://127.0.0.1:{port}/hotel_erp.html"
 
+    # A second Setu window uses the first one's server. If that first copy is closed, take
+    # the server over, so this window keeps saving (its unsaved edits are pushed on retry).
+    if already and not server_only:
+        threading.Thread(target=keep_server, args=(base_dir, data_dir, port), daemon=True).start()
+
     if server_only:
         if already:
             print(f'Setu is already running: {url}')
@@ -781,6 +996,41 @@ def main():
         except KeyboardInterrupt:
             return
 
+    try:
+        open_window(base_dir, data_dir, url)
+    except Exception as e:
+        # No WebView2 runtime (old Windows 10 / 7) or a broken pywebview: the server is already
+        # up, so run Setu in the normal browser instead of closing without a word.
+        log_line(data_dir, f'Desktop window failed, opening browser: {e!r}')
+        import webbrowser
+        webbrowser.open(url)
+        msg = ('Setu ki window nahi khul payi, isliye Setu browser mein khula hai.\n\n'
+               'Window ke liye Microsoft Edge WebView2 Runtime install karein '
+               '(go.microsoft.com/fwlink/p/?LinkId=2124703).\n\n'
+               'Billing chalu rakhne ke liye ye message band karein, Setu chalta rahega.')
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(0, msg, 'Setu', 0x40)
+        except Exception:
+            print(msg)
+        if already:
+            return
+        try:
+            while True:
+                time.sleep(3600)
+        except KeyboardInterrupt:
+            return
+
+
+def log_line(data_dir, msg):
+    try:
+        with open(os.path.join(data_dir, 'setu-server.log'), 'a', encoding='utf-8') as f:
+            f.write(time.strftime('%Y-%m-%d %H:%M:%S ') + msg + '\n')
+    except Exception:
+        pass
+
+
+def open_window(base_dir, data_dir, url):
     import webview  # only needed for the desktop window
 
     icon_path = os.path.join(base_dir, 'favicon.ico')
@@ -804,12 +1054,14 @@ def main():
     for sub in ('Service Worker', 'Cache', 'Code Cache'):
         shutil.rmtree(os.path.join(data_dir, 'EBWebView', 'Default', sub), ignore_errors=True)
 
+    # Ask for Edge WebView2 by name: without it pywebview drops to old IE (MSHTML), where the
+    # page does not work. Asking by name makes it fail here, so main() opens the browser.
     webview.start(
+        gui='edgechromium' if os.name == 'nt' else None,
         private_mode=False,
         storage_path=data_dir,
         icon=icon_path
     )
-
 
 if __name__ == '__main__':
     main()

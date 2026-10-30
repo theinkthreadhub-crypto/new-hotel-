@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Setu Hotel Admin</string>
+    <color name="brand">#0F172A</color>
+    <color name="bg">#F1F5F9</color>
+    <style name="AppTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:colorPrimary">@color/brand</item>
+        <item name="android:colorPrimaryDark">@color/brand</item>
+        <item name="android:statusBarColor">@color/brand</item>
+        <item name="android:windowBackground">@color/bg</item>
+    </style>
+</resources>

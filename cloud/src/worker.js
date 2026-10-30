@@ -146,7 +146,8 @@ function saasView(a){
   const tier = TIERS[c.tier] ? c.tier : 'premium';
   const features = {};
   Object.keys(FEATURES).forEach(k => features[k] = k in (c.overrides || {}) ? !!c.overrides[k] : TIERS[tier].features.includes(k));
-  return { hotel: a.code, tier, tierLabel: TIERS[tier].label, businessType: c.businessType, features, billing: c.billing, rules: c.rules, ver: c.ver || 1 };
+  return { hotel: a.code, tier, tierLabel: TIERS[tier].label, businessType: c.businessType, features, billing: c.billing, rules: c.rules, ver: c.ver || 1,
+    notice: a.notice || null, lock: a.lock || null };
 }
 
 // ---------- License keys (same format as keygen.py / getActivationKeyInfo in the app) ----------
@@ -176,6 +177,36 @@ async function makeLicenseKey(env, installId, days){
   all.set(payload);
   all.set(sig, 13);
   return 'SETU-' + b32encode(all).match(/.{1,8}/g).join('-');
+}
+
+// Vendor's PUBLIC key (same as LIC_PUBKEY in hotel_erp.html). LICENSE_PUBKEY overrides it.
+const LIC_PUBKEY = 'BM5bUDY3UM7RlEK5DtWhEq0N3mySWG27xZA3gmkCzNETrSpwrM1GaubNvi0XKGLeBZHPE8HeXlzpFeUBzFS25/M=';
+
+function b32decode(text, n){
+  let bits = '';
+  for(const c of text) bits += B32.indexOf(c).toString(2).padStart(5, '0');
+  const out = new Uint8Array(n);
+  for(let i = 0; i < n; i++) out[i] = parseInt(bits.slice(i * 8, i * 8 + 8), 2);
+  return out;
+}
+
+// A counter PC proves it is a real, licensed Setu install with its own signed key.
+// Returns { until, lifetime } (until = ms) or throws. Kind 4 (password reset) is never a licence.
+async function verifyLicense(env, key, installId){
+  const text = String(key || '').toUpperCase().replace(/[^A-Z2-7]/g, '');
+  if(!text.startsWith('SETU') || text.length < 128) throw new Error('license key required');
+  const bytes = b32decode(text.slice(4, 128), 77), payload = bytes.slice(0, 13), sig = bytes.slice(13);
+  const pub = await crypto.subtle.importKey('raw', Uint8Array.from(atob(env.LICENSE_PUBKEY || LIC_PUBKEY), c => c.charCodeAt(0)),
+    { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+  if(payload[0] !== 1 || !await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, pub, sig, payload)) throw new Error('license key not genuine');
+  const clean = String(installId || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const ih = new Uint8Array(await crypto.subtle.digest('SHA-256', enc(clean)));
+  if(clean.length < 8 || [0, 1, 2, 3].some(i => ih[i] !== payload[4 + i])) throw new Error('license key is for another computer');
+  const kind = payload[1], value = (payload[2] << 8) | payload[3], issued = LIC_EPOCH + ((payload[11] << 8) | payload[12]) * DAY;
+  if(kind === 3) return { until: Date.now() + 3650 * DAY, lifetime: true };
+  if(kind === 1) return { until: issued + (value + 1) * DAY, lifetime: false };
+  if(kind === 2) return { until: issued + DAY + value * 60000, lifetime: false };
+  throw new Error('not a license key');
 }
 
 // ---------- Razorpay / Cloudflare APIs ----------
@@ -229,6 +260,14 @@ export class SetuRegistry extends DurableObject {
     if(!cols.includes('tier')) this.sql.exec('ALTER TABLE hotel ADD COLUMN tier TEXT');
     if(!cols.includes('btype')) this.sql.exec('ALTER TABLE hotel ADD COLUMN btype TEXT');
     if(!cols.includes('iid')) this.sql.exec('ALTER TABLE hotel ADD COLUMN iid TEXT');
+    // Library-ERP style Super Admin: licence on the counter, message / lock shown in the app
+    if(!cols.includes('lic')) this.sql.exec('ALTER TABLE hotel ADD COLUMN lic TEXT');
+    if(!cols.includes('notice')) this.sql.exec('ALTER TABLE hotel ADD COLUMN notice TEXT');
+    if(!cols.includes('lockv')) this.sql.exec('ALTER TABLE hotel ADD COLUMN lockv INTEGER DEFAULT 0');
+    // Help & Support tickets from the hotels, and Install IDs the vendor blocked
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS ticket (id TEXT PRIMARY KEY, code TEXT NOT NULL, subject TEXT, status TEXT, msgs TEXT,
+      created INTEGER, updated INTEGER, unread_admin INTEGER DEFAULT 0, unread_hotel INTEGER DEFAULT 0)`);
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS blocked (iid TEXT PRIMARY KEY, code TEXT, name TEXT, at INTEGER)`);
   }
 
   async fetch(request){
@@ -265,26 +304,76 @@ export class SetuRegistry extends DurableObject {
         const digits = i < 20 ? 3 : 5;
         const code = stem + String(crypto.getRandomValues(new Uint32Array(1))[0] % 10 ** digits).padStart(digits, '0');
         if(one('SELECT 1 AS x FROM hotel WHERE code = ?', code)) continue;
-        this.sql.exec(`INSERT INTO hotel (code, name, owner, phone, email, created, paid_until, status, plan, tier, btype) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'trial', ?, ?)`,
-          code, body.name, body.owner, body.phone, body.email, now, body.paidUntil, body.status || 'trial', body.tier || '', body.btype || '');
+        this.sql.exec(`INSERT INTO hotel (code, name, owner, phone, email, created, paid_until, status, plan, tier, btype, iid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          code, body.name, body.owner, body.phone, body.email, now, body.paidUntil, body.status || 'trial', body.plan || 'trial', body.tier || '', body.btype || '', body.iid || '');
         return json(200, { code });
       }
       return json(500, { error: 'code not free' });
     }
+    if(path === '/byiid'){
+      const h = body.iid ? one('SELECT code FROM hotel WHERE iid = ? ORDER BY created DESC LIMIT 1', body.iid) : null;
+      return json(200, { code: h ? h.code : '' });
+    }
+    if(path === '/claimiid'){
+      // An Install ID belongs to one hotel: the one that just restored onto that PC
+      this.sql.exec(`UPDATE hotel SET iid = '' WHERE iid = ? AND code <> ?`, body.iid, body.code);
+      this.sql.exec('UPDATE hotel SET iid = ? WHERE code = ?', body.iid, body.code);
+      return json(200, { ok: true });
+    }
+    // ----- Help & Support tickets (by: 'hotel' or 'admin') -----
+    if(path === '/ticket/list'){
+      const rows = body.code
+        ? this.sql.exec('SELECT * FROM ticket WHERE code = ? ORDER BY updated DESC LIMIT 100', body.code).toArray()
+        : this.sql.exec('SELECT t.*, h.name AS hotel_name FROM ticket t LEFT JOIN hotel h ON h.code = t.code ORDER BY t.updated DESC LIMIT 300').toArray();
+      if(body.read === 'admin') this.sql.exec(body.code ? 'UPDATE ticket SET unread_admin = 0 WHERE code = ?' : 'UPDATE ticket SET unread_admin = 0', ...(body.code ? [body.code] : []));
+      if(body.read === 'hotel' && body.code) this.sql.exec('UPDATE ticket SET unread_hotel = 0 WHERE code = ?', body.code);
+      rows.forEach(t => { try{ t.msgs = JSON.parse(t.msgs || '[]'); }catch(e){ t.msgs = []; } });
+      return json(200, { tickets: rows });
+    }
+    if(path === '/ticket/put'){
+      const now = Date.now(), by = body.by === 'admin' ? 'admin' : 'hotel', text = str(body.text, 2000);
+      let t = body.id ? one('SELECT * FROM ticket WHERE id = ?', body.id) : null;
+      if(body.id && (!t || (by === 'hotel' && t.code !== body.code))) return json(404, { error: 'ticket not found' });
+      if(!t){
+        if(by !== 'hotel' || !text) return json(400, { error: 'Please write your problem' });
+        const open = one(`SELECT COUNT(*) AS n FROM ticket WHERE code = ? AND status = 'open'`, body.code).n;
+        if(open >= 20) return json(429, { error: 'Too many open tickets' });
+        t = { id: 'T' + now.toString(36).toUpperCase() + randomHex(2).toUpperCase(), code: body.code, subject: str(body.subject, 100) || text.slice(0, 60), status: 'open', msgs: '[]', created: now };
+      }
+      const msgs = JSON.parse(t.msgs || '[]');
+      if(text) msgs.push({ by, text, at: now });
+      const status = ['open', 'resolved'].includes(body.status) ? body.status : (text && by === 'hotel' ? 'open' : t.status);
+      this.sql.exec(`INSERT OR REPLACE INTO ticket (id, code, subject, status, msgs, created, updated, unread_admin, unread_hotel) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        t.id, t.code, t.subject, status, JSON.stringify(msgs.slice(-100)), t.created, now,
+        by === 'hotel' && text ? 1 : (by === 'admin' ? 0 : t.unread_admin || 0), by === 'admin' && text ? 1 : (by === 'hotel' ? 0 : t.unread_hotel || 0));
+      return json(200, { id: t.id, status });
+    }
+    // ----- delete a hotel, block its computer -----
+    if(path === '/hotel/remove'){
+      const h = one('SELECT * FROM hotel WHERE code = ?', body.code);
+      if(body.block && h && h.iid) this.sql.exec('INSERT OR REPLACE INTO blocked (iid, code, name, at) VALUES (?, ?, ?, ?)', h.iid, h.code, h.name || '', Date.now());
+      ['hotel', 'domain', 'ticket'].forEach(t => this.sql.exec(`DELETE FROM ${t} WHERE code = ?`, body.code));
+      return json(200, { ok: true, iid: h ? h.iid : '' });
+    }
+    if(path === '/blocked/check') return json(200, { blocked: !!(body.iid && one('SELECT 1 AS x FROM blocked WHERE iid = ?', body.iid)) });
+    if(path === '/blocked/list') return json(200, { blocked: this.sql.exec('SELECT * FROM blocked ORDER BY at DESC').toArray() });
+    if(path === '/blocked/remove'){ this.sql.exec('DELETE FROM blocked WHERE iid = ?', body.iid); return json(200, { ok: true }); }
     if(path === '/release'){
       this.sql.exec('DELETE FROM hotel WHERE code = ?', body.code);
       return json(200, { ok: true });
     }
     if(path === '/update'){
-      const cols = ['name', 'owner', 'phone', 'email', 'paid_until', 'status', 'plan', 'version', 'seen', 'tier', 'btype', 'iid'].filter(c => c in body);
+      const cols = ['name', 'owner', 'phone', 'email', 'paid_until', 'status', 'plan', 'version', 'seen', 'tier', 'btype', 'iid', 'lic', 'notice', 'lockv'].filter(c => c in body);
       if(cols.length) this.sql.exec(`UPDATE hotel SET ${cols.map(c => c + ' = ?').join(', ')} WHERE code = ?`, ...cols.map(c => body[c]), body.code);
       return json(200, { ok: true });
     }
     if(path === '/list'){
       const hotels = this.sql.exec('SELECT * FROM hotel ORDER BY created DESC').toArray();
       const doms = this.sql.exec('SELECT host, code, kind, status FROM domain').toArray();
-      hotels.forEach(h => h.domains = doms.filter(d => d.code === h.code));
-      return json(200, { hotels });
+      const unread = {};
+      this.sql.exec('SELECT code, SUM(unread_admin) AS n FROM ticket GROUP BY code').toArray().forEach(r => unread[r.code] = r.n || 0);
+      hotels.forEach(h => { h.domains = doms.filter(d => d.code === h.code); h.tickets = unread[h.code] || 0; });
+      return json(200, { hotels, ticketsUnread: Object.values(unread).reduce((a, n) => a + n, 0) });
     }
     if(path === '/stats'){
       const since = Date.now() - 30 * DAY;
@@ -366,7 +455,8 @@ export class SetuHotel extends DurableObject {
     const a = this.account;
     // Best effort: the registry copy is only for the Super Admin list
     this.ctx.waitUntil(regCall(this.env, '/update', { code: a.code, name: a.name, owner: a.owner, phone: a.phone, email: a.email,
-      paid_until: a.paidUntil, status: a.status, plan: a.plan, version: this.meta.version, tier: a.config.tier, btype: a.config.businessType }).catch(() => {}));
+      paid_until: a.paidUntil, status: a.status, plan: a.plan, version: this.meta.version, tier: a.config.tier, btype: a.config.businessType,
+      notice: a.notice ? a.notice.t : '', lockv: a.lock ? a.lock.lv : 0 }).catch(() => {}));
   }
 
   readSlot(slot){
@@ -442,8 +532,9 @@ export class SetuHotel extends DurableObject {
     });
     if(this.meta.day !== day || now - (this.seenPushed || 0) > 10 * 60000){
       this.seenPushed = now;
-      const iid = String((d.settings || {}).installId || '').slice(0, 20);
-      this.ctx.waitUntil(regCall(this.env, '/update', { code: a.code, version: meta.version, seen: now, iid }).catch(() => {}));
+      const iid = String((d.settings || {}).installId || '').slice(0, 20), sub = d.subscription || {};
+      const lic = sub.isLifetime ? 'lifetime' : String(sub.validUntil || '').slice(0, 25);
+      this.ctx.waitUntil(regCall(this.env, '/update', { code: a.code, version: meta.version, seen: now, iid, lic }).catch(() => {}));
     }
     this.meta = meta;
     this.raw = raw;
@@ -475,7 +566,7 @@ export class SetuHotel extends DurableObject {
       plans: Object.entries(p).map(([id, x]) => ({ id, tier: x.tier || '', tierLabel: (TIERS[x.tier] || {}).label || '', label: x.label || id, price: x.price || 0, days: x.days || 30 })),
       payments: this.sql.exec('SELECT id, plan, days, amount, at FROM payment ORDER BY at DESC LIMIT 24').toArray(),
       features: view.features, version: this.meta.version, savedAt: this.meta.savedAt,
-      supportLog: (a.supportLog || []).slice(0, 10), gstin: a.gstin || '',
+      supportLog: (a.supportLog || []).slice(0, 10), gstin: a.gstin || '', notice: a.notice || null, lock: a.lock || null,
       counter: this.counterInfo(),
       backups: this.sql.exec(`SELECT DISTINCT slot FROM chunk WHERE slot LIKE 'bk:%' ORDER BY slot DESC`).toArray().map(r => r.slot.slice(3)).slice(0, 7)
     };
@@ -583,6 +674,38 @@ export class SetuHotel extends DurableObject {
       ...(setup ? { setup: true, hotelName: a.name, owner: a.owner, phone: a.phone } : {}) });
   }
 
+  // New / formatted counter PC: Hotel Code + owner password gives it a fresh Sync Key.
+  // Same wrong-try lock as the phone login; only the owner (manager) password works.
+  async counterRestore(request, text){
+    let b;
+    try{ b = JSON.parse(text); }catch(e){ return json(400, { error: 'bad request' }); }
+    const ip = request.headers.get('CF-Connecting-IP') || 'unknown', now = Date.now();
+    const fails = this.kvGet('fail:' + ip) || { n: 0, at: now };
+    if(now - fails.at > FAIL_WINDOW){ fails.n = 0; fails.at = now; }
+    if(fails.n >= FAIL_LIMIT) return json(429, { error: 'Too many wrong tries. Please wait 15 minutes.' });
+    const a = this.account, pw = String(b.password || '');
+    let ok = false, d = {};
+    try{ d = JSON.parse(this.data()) || {}; }catch(e){}
+    // The owner's own password only (not a staff Manager PIN): it moves the whole hotel to this PC
+    if(pw && (pw === String((d.settings || {}).adminPin || '') || pw === String((d.auth || {}).password || ''))) ok = true;
+    else if(!this.meta.version && a.ownerHash && pw && sameText(await sha256(pw), a.ownerHash)) ok = true;
+    if(!ok){
+      fails.n++;
+      this.kvSet('fail:' + ip, fails);
+      return json(403, { error: 'Wrong owner password' });
+    }
+    this.kvDel('fail:' + ip);
+    if(isWeak(pw)) return json(403, { error: 'Owner password bahut aasaan hai. Purane PC par Settings mein password badlein, ya vendor se reset karwayein.' });
+    const syncKey = randomHex(20);
+    a.syncHash = await sha256(syncKey);
+    a.syncKey = syncKey;
+    const iid = String(b.installId || '').toUpperCase();
+    if(/^SETU-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(iid)) a.installId = iid;
+    this.saveAccount();
+    if(a.installId === iid) await regCall(this.env, '/claimiid', { code: a.code, iid }).catch(() => {});
+    return json(200, { code: a.code, name: a.name, syncKey });
+  }
+
   // ----- Super Admin changes to this hotel -----
   async adminUpdate(b){
     const a = this.account, c = a.config;
@@ -628,6 +751,17 @@ export class SetuHotel extends DurableObject {
       }
       notes.push('activation key sent');
     }
+    // Message popup and warning / lock in the hotel's app (Library ERP style); data always stays safe
+    if(b.notice !== undefined){
+      const t = str(b.notice, 500);
+      a.notice = t ? { t, at: Date.now() } : null;
+      notes.push(t ? 'message sent' : 'message cleared');
+    }
+    if(b.lock !== undefined){
+      const lv = Math.max(0, Math.min(2, +(b.lock && b.lock.lv) || 0));
+      a.lock = lv ? { lv, msg: str(b.lock.msg, 300), at: Date.now() } : null;
+      notes.push(['lock off', 'warning on', 'app locked'][lv]);
+    }
     if(b.overrides || b.billing || b.rules || b.tier || b.applyTemplate || b.businessType) cfg.ver = (cfg.ver || 1) + 1;
     // Lost keys: a new Counter PC Sync Key (shown once) and / or a new owner first-login password
     if(b.newSyncKey){ this.issuedSyncKey = randomHex(20); a.syncHash = await sha256(this.issuedSyncKey); a.syncKey = this.issuedSyncKey; notes.push('new sync key'); }
@@ -669,7 +803,8 @@ export class SetuHotel extends DurableObject {
       if(this.account) return json(409, { error: 'exists' });
       const b = body();
       const syncKey = randomHex(20);
-      this.account = { code: b.code, name: b.name, owner: b.owner, phone: b.phone, email: b.email, installId: b.installId || '',
+      this.account = { code: b.code, name: b.name, owner: b.owner, phone: b.phone, email: b.email, installId: b.installId || b.counterId || '',
+        ...(b.lifetime ? { lifetime: true } : {}),
         created: Date.now(), paidUntil: b.paidUntil, status: b.status || 'trial', plan: b.plan || 'trial',
         syncHash: await sha256(syncKey), syncKey, pendingKeys: [], config: newConfig(b.businessType, b.tier),
         ...(b.password ? { ownerHash: await sha256(b.password), ownerPass: b.password, initialDays: b.days } : {}) };
@@ -697,6 +832,12 @@ export class SetuHotel extends DurableObject {
       this.issuedSyncKey = '';
       return json(200, { ...this.billingInfo(), config: this.account.config, notes, ...(syncKey ? { syncKey } : {}), storedSyncKey: this.account.syncKey || '', storedOwnerPass: this.account.ownerPass || '' });
     }
+    if(path === '/internal/backup') return rawJson(200, this.dbText(`"hotel": ${JSON.stringify(this.account.code)}, `));
+    if(path === '/internal/delete'){
+      await this.ctx.storage.deleteAll();
+      this.account = null; this.meta = { version: 0, savedAt: 0, day: '' }; this.raw = null;
+      return json(200, { ok: true });
+    }
     if(path === '/internal/support'){
       // Time-limited, read-only support login; the hotel sees it in Settings
       const b = body(), minutes = Math.max(5, Math.min(240, +b.minutes || 60));
@@ -711,6 +852,7 @@ export class SetuHotel extends DurableObject {
     if(method === 'GET' && path === '/api/ping') return json(200, { setu: true, cloud: true, saas: true, local: false, hotel: this.account.code, name: this.account.name, hostLocked: locked, version: this.meta.version });
     if(method === 'GET' && path === '/api/info') return json(200, { setu: true, cloud: true, saas: true, local: false, ips: [] });
     if(method === 'POST' && path === '/api/login') return this.login(request, text);
+    if(method === 'POST' && path === '/api/counter/restore') return this.counterRestore(request, text);
 
     const role = await this.role(request);
     if(!role) return json(401, { error: 'pin required' });
@@ -790,6 +932,28 @@ export class SetuHotel extends DurableObject {
       }
     }
 
+    // Help & Support: the hotel writes to the vendor, the vendor replies from Super Admin
+    if(path === '/api/support/tickets' || path === '/api/support/ticket'){
+      if(!isAdmin) return json(403, { error: 'manager only' });
+      if(path === '/api/support/tickets') return regCall(this.env, '/ticket/list', { code: this.account.code, read: 'hotel' });
+      if(method !== 'POST') return json(405, { error: 'POST only' });
+      const b = body();
+      return regCall(this.env, '/ticket/put', { code: this.account.code, by: 'hotel', id: b.id || '', subject: b.subject, text: b.text, status: b.status === 'resolved' ? 'resolved' : undefined });
+    }
+
+    // Counter PC licence renewed (keygen or Super Admin): the cloud period follows the signed key
+    if(method === 'POST' && path === '/api/counter/license'){
+      if(role !== 'sync') return json(403, { error: 'main counter only' });
+      const a = this.account;
+      if(a.plan !== 'counter') return json(200, { ok: true, paidUntil: a.paidUntil, ignored: true });
+      let lic;
+      try{ lic = await verifyLicense(this.env, body().key, a.installId); }catch(e){ return json(400, { error: e.message }); }
+      if(lic.lifetime) a.lifetime = true;
+      if(lic.until > (a.paidUntil || 0)){ a.paidUntil = lic.until; if(a.status !== 'suspended') a.status = 'active'; }
+      this.saveAccount();
+      return json(200, { ok: true, paidUntil: a.paidUntil, lifetime: !!a.lifetime });
+    }
+
     // New sync key for the counter PC (shown once)
     if(method === 'POST' && path === '/api/synckey'){
       if(role !== 'admin') return json(403, { error: 'manager only' });
@@ -843,14 +1007,14 @@ async function createHotel(env, input, opts){
   const paidUntil = Date.now() + opts.days * DAY;
   const tier = opts.tier || (TEMPLATES[input.businessType] || TEMPLATES.restaurant).tier;
   const r = await regCall(env, '/reserve', { name: input.name, owner: input.owner, phone: input.phone, email: input.email, paidUntil,
-    ip: opts.ip, admin: opts.admin, status: opts.status, tier, btype: input.businessType });
+    ip: opts.ip, admin: opts.admin, status: opts.status, plan: opts.plan, tier, btype: input.businessType, iid: opts.counterId || '' });
   if(r.status === 429) return json(429, { error: 'Too many sign-ups from this network. Please try again in an hour.' });
   if(!r.ok) return json(500, { error: 'Could not create the hotel. Please try again.' });
   const { code } = await r.json();
   const h = await hotelStub(env, code).fetch('https://hotel/internal/create', { method: 'POST', body: JSON.stringify({
     code, name: input.name, owner: input.owner, phone: input.phone, email: input.email, businessType: input.businessType, tier,
     installId: opts.installId || '', password: opts.installId ? '' : input.password, days: opts.days, paidUntil,
-    status: opts.status, plan: opts.plan }) });
+    status: opts.status, plan: opts.plan, counterId: opts.counterId || '', lifetime: !!opts.lifetime }) });
   if(!h.ok){
     await regCall(env, '/release', { code });
     return json(500, { error: 'Could not create the hotel. Please try again.' });
@@ -868,6 +1032,27 @@ async function signup(request, env){
   if(!env.LICENSE_PRIVATE_KEY) return json(503, { error: 'Sign-up is not available yet (vendor setup pending)' });
   return createHotel(env, input, { days: +env.TRIAL_DAYS || 14, installId, ip: request.headers.get('CF-Connecting-IP') || 'unknown',
     tier: TIERS[env.TRIAL_TIER] ? env.TRIAL_TIER : 'premium' });
+}
+
+// Library-ERP style: a licensed counter PC joins the cloud by itself, no codes to type.
+// The signed licence key (tied to this Install ID) is the proof; one hotel per Install ID.
+async function counterLink(request, env){
+  let b;
+  try{ b = await request.json(); }catch(e){ return json(400, { error: 'bad request' }); }
+  const installId = String(b.installId || '').toUpperCase();
+  if(!/^SETU-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(installId)) return json(400, { error: 'install id' });
+  let lic;
+  try{ lic = await verifyLicense(env, b.key, installId); }catch(e){ return json(403, { error: e.message }); }
+  if((await regJson(env, '/blocked/check', { iid: installId })).blocked) return json(403, { error: 'Ye computer Setu Pro ne block kiya hai. Vendor se baat karein.' });
+  // Already joined (setu-cloud.json lost, Windows reinstalled): only the owner password may take it over
+  const have = (await regJson(env, '/byiid', { iid: installId })).code;
+  if(have) return json(409, { error: 'linked', code: have });
+  const phone = String(b.phone || '').replace(/\D/g, '').slice(-10);
+  const input = { name: str(b.name, 80) || 'Setu Hotel', owner: str(b.owner, 60) || 'Owner', phone, email: '',
+    businessType: TEMPLATES[b.businessType] ? b.businessType : 'restaurant' };
+  const days = Math.max(1, Math.ceil((lic.until - Date.now()) / DAY));
+  return createHotel(env, input, { days, counterId: installId, lifetime: lic.lifetime, status: 'active', plan: 'counter',
+    ip: request.headers.get('CF-Connecting-IP') || 'unknown' });
 }
 
 async function webhook(request, env){
@@ -941,8 +1126,39 @@ async function admin(request, env, path){
     return res;
   }
 
+  if(path === '/api/admin/tickets') return regCall(env, '/ticket/list', { code: validCode(body.code) ? body.code : '', read: body.read ? 'admin' : '' });
+  if(path === '/api/admin/blocked') return regCall(env, '/blocked/list', {});
+  if(path === '/api/admin/unblock'){
+    const iid = String(body.iid || '');
+    await regCall(env, '/blocked/remove', { iid });
+    await log('Computer unblocked', '', iid);
+    return json(200, { ok: true });
+  }
+
   const code = String(body.code || '').toUpperCase();
   if(!validCode(code)) return json(400, { error: 'code' });
+
+  if(path === '/api/admin/ticket'){
+    const r = await regCall(env, '/ticket/put', { code, by: 'admin', id: String(body.id || ''), text: body.reply || '', status: body.status });
+    if(r.ok) await log('Ticket reply', code, str(body.reply || body.status, 120));
+    return r;
+  }
+  if(path === '/api/admin/backup'){
+    const r = await hotelCall(code, '/internal/backup', {});
+    if(!r.ok) return r;
+    await log('Backup downloaded', code, '');
+    return new Response(r.body, { headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store',
+      'Content-Disposition': `attachment; filename="setu-${code}-${istDay()}.json"` } });
+  }
+  if(path === '/api/admin/delete'){
+    if(String(body.confirm || '').toUpperCase() !== code) return json(400, { error: 'Type the Hotel Code to confirm' });
+    const doms = (await regJson(env, '/domain/list', { code })).domains || [];
+    for(const d of doms){ if(d.cf_id){ try{ await cfApi(env, 'DELETE', '/custom_hostnames/' + d.cf_id); }catch(e){} } }
+    const rm = await regJson(env, '/hotel/remove', { code, block: !!body.block });
+    await hotelCall(code, '/internal/delete', {});
+    await log('Hotel deleted', code, (body.block ? 'computer blocked ' : '') + (rm.iid || ''));
+    return json(200, { ok: true });
+  }
 
   if(path === '/api/admin/hotel'){
     const r = await hotelCall(code, '/internal/admin', body.update || {});
@@ -1029,6 +1245,7 @@ export default {
       return env.ASSETS.fetch(request);
     }
     if(path === '/api/signup' && request.method === 'POST') return signup(request, env);
+    if(path === '/api/counter/link' && request.method === 'POST') return counterLink(request, env);
     if(path === '/api/razorpay/webhook' && request.method === 'POST') return webhook(request, env);
     if(path.startsWith('/api/admin/')) return admin(request, env, path);
     // The hotel's own domain decides the hotel; a header from the browser cannot override it

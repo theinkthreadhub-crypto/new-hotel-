@@ -21,7 +21,7 @@ internet dependency at runtime. All data lives on the customer's PC.
 |---|---|
 | `hotel_erp.html` | The entire app: CSS, HTML shell and all JavaScript (~5.7k lines). Almost all work happens here. |
 | `app_main.py` | Main-counter launcher + LAN server on fixed port 8000 (`0.0.0.0`). Keeps the shared database in `setu-db.json` with daily `Backups/`, serves phones/tablets, opens the pywebview window. `--server` = no window. Data dir: `%LOCALAPPDATA%\AghanyaDevanyaERP\Data`. |
-| `Aghanya-Devanya-Hotel-ERP.spec`, `Build-New-EXE.bat` | PyInstaller build. The `.bat` passes its own flags and does not use the `.spec`. Keep both in sync if you add bundled files. |
+| `Aghanya-Devanya-Hotel-ERP.spec`, `Build-New-EXE.bat` | PyInstaller build. The `.bat` passes its own flags and does not use the `.spec`. Keep both in sync if you add bundled files. `.github/workflows/build-exe.yml` builds the same EXE on GitHub (Actions artifact `Setu-POS-Setup`) and must use the same flags. |
 | `cloud/` | **Setu Pro Cloud SaaS** (Cloudflare Worker). `SetuHotel` Durable Object (SQLite) per hotel, keyed by Hotel Code (`X-Setu-Hotel`) or by the hotel's own domain/subdomain (registry `domain` table; host beats header). `SetuRegistry` = hotels, domains, payments, Super Admin audit. Catalogue in `worker.js`: `FEATURES` (module -> data keys), `TIERS` (basic/premium/diamond), `TEMPLATES` (restaurant/cafe/hotel/cloudkitchen). Per-hotel `config` (tier, feature overrides, billing template, rules) is written into the data as `D.saas` by `prepare()` on every save; clients only read it. Off modules: server keeps its stored copy of their keys. Razorpay plans in `PLANS` var (`tier_cycle`). Super Admin UI: `static/admin.html` (`/api/admin/*`, `ADMIN_KEY`). See `cloud/README-HINDI.md`. |
 | `manifest.json`, `sw.js` | PWA install + offline cache. |
 | `keygen.py`, `Generate-Activation-Keys.bat` | Vendor-only license key signer (ECDSA P-256). Needs `setu-license-private.pem`, which is **never** in git (`*.pem` ignored). `python keygen.py <INSTALL-ID> <plan>`. |
@@ -71,7 +71,7 @@ Rebuild the EXE on Windows with `Build-New-EXE.bat`.
   `SCREENS` maps each screenKey to a render function. `go(key)` checks auth and license, then renders
   into `#main`. Screens are plain functions that set `main.innerHTML` from template strings.
   A new screen needs a `MENU` row, a `SCREENS` entry and a `scrXxx()` function.
-  Hotkeys must be unique. Letters already used: B Z L P E I D C W S M T Q R A O N H X F U Y V K G. Free: J.
+  Hotkeys must be unique. All 26 letters are used; `1` = Help & Support. Use another digit for a new screen.
 - **UI helpers:** `modal(title, html)`, `closeModal()`, `tryCloseModal()`, `toast(msg)`,
   `waOpen(phone, text)`, `waOwner(text)`, `printDoc([htmlParts])`.
   Money is formatted with `money()` / `rs()` and rounded with `r2()`. Dates are `YYYY-MM-DD` strings from `today()`.
@@ -104,6 +104,18 @@ Rebuild the EXE on Windows with `Build-New-EXE.bat`.
   change the Python port too.** On the cloud (`SRV.cloud` / `SRV.saas`) login = Hotel Code + PIN (or the hotel's domain), weak PINs
   are refused, 5 wrong PINs lock an IP for 15 min, direct printing is off. Never trust the client for billing or modules: the Worker
   decides `blocked`, `D.saas` and what off-modules may change.
+- **Auto-join (Library ERP style):** a licensed counter with menu or bills joins Setu Cloud by itself
+  (`CloudSync.auto_link()` -> Worker `/api/counter/link`, proof = the PC's own signed `SETU-` key + Install ID,
+  `DEFAULT_CLOUD_URL`). One hotel per Install ID (registry `iid`); a second join gets 409 and needs
+  `/api/counter/restore` (Hotel Code + owner password -> new Sync Key; `restore` flag makes the first sync take the
+  cloud copy but keep this PC's Install ID and licence). Joined hotels have `plan: 'counter'`; `/api/counter/license`
+  moves `paidUntil` to the newest signed key. Deploy: `.github/workflows/setu-cloud-deploy.yml`.
+- **Super Admin (Library ERP style):** hotel cards sorted by urgency (licence / payment <= 5 days, tickets, stale
+  backup) with Call / WhatsApp. Message (`account.notice`) and Warning / Lock (`account.lock`, lv 1 banner, lv 2 full
+  lock, data untouched) reach the app as `D.saas.notice` / `D.saas.lock` (`saasNotices()`). Help & Support tickets
+  live in the registry `ticket` table (`/api/support/*` on the hotel, proxied by `app_main.py` for the counter).
+  Delete (`/api/admin/delete`, type the code) can block the Install ID (registry `blocked`); a deleted hotel's
+  counter gets 404 and joins again unless blocked.
 - **Setu Pro config in the app:** `featureOn()` / `screenOn()` hide modules (`FEATURE_SCREENS`, `drawSide`, `go`). `applySaas()` (in
   `ensureGrowth`) maps the bill template and rules onto `settings`. `billFields()` = custom bill fields (`B.extra` -> `bill.extra`,
   printed by `billHTML` / `escBill`). `saasRules().phoneAbove` needs a mobile on big bills. Support links (`#support=CODE.TOKEN`) open a
@@ -116,6 +128,8 @@ Rebuild the EXE on Windows with `Build-New-EXE.bat`.
   `LIC_PUBKEY` and `settings.installId` (needs a secure context: 127.0.0.1 / localhost / https).
   Used keys go to `subscription.usedKeys`. `subscription.lastSeen` blocks clock rollback.
   Built-in `AD-DEMO-*` keys work once per install and never shorten a running license.
+  Kind 4 = owner password Reset Key (`keygen.py <ID> reset`): `forgotPass()` / `resetOwnerPass()` on the sign-in screen,
+  one use, valid 2 days from issue; `getActivationKeyInfo()` must keep refusing it as a license. Both share `licVerify()`.
   Never put real keys, salts or private keys in the page.
 - **Staff & permissions:** `activeUser = {name, role: 'admin'|'cashier', access: 'manager'|'cashier'|'captain'}`.
   Staff log in with their own PIN (`staff[].pin/access`). `go()` blocks `CASHIER_BLOCK` screens and keeps

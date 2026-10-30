@@ -15,6 +15,8 @@ set SHORTCUT_NAME=Setu POS
 set DESKTOP_DIR=%USERPROFILE%\Desktop
 set STARTMENU_DIR=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Setu POS
 
+if not exist "%SCRIPT_DIR%Aghanya-Devanya-Hotel-ERP.exe" goto noexe
+
 echo [1/4] Creating installation directory at:
 echo       "%INSTALL_DIR%"
 if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
@@ -22,6 +24,9 @@ if not exist "%STARTMENU_DIR%" mkdir "%STARTMENU_DIR%"
 
 echo [2/4] Copying executable files...
 copy /Y "%SCRIPT_DIR%Aghanya-Devanya-Hotel-ERP.exe" "%INSTALL_DIR%\" >nul
+if errorlevel 1 goto copyfail
+rem Files from a download / WhatsApp / ZIP carry a "blocked" mark that stops them from opening
+powershell -NoProfile -Command "Get-ChildItem -LiteralPath '%INSTALL_DIR%' | Unblock-File" >nul 2>&1
 copy /Y "%SCRIPT_DIR%hotel_erp.html" "%INSTALL_DIR%\" >nul
 copy /Y "%SCRIPT_DIR%manifest.json" "%INSTALL_DIR%\" >nul
 copy /Y "%SCRIPT_DIR%sw.js" "%INSTALL_DIR%\" >nul
@@ -34,7 +39,7 @@ set VBS_FILE=%TEMP%\CreateErpShortcuts.vbs
 
 echo Set oWS = WScript.CreateObject("WScript.Shell") > "%VBS_FILE%"
 
-:: Desktop Shortcut
+rem Desktop Shortcut
 echo sDeskLink = "%DESKTOP_DIR%\%SHORTCUT_NAME%.lnk" >> "%VBS_FILE%"
 echo Set oDeskLink = oWS.CreateShortcut(sDeskLink) >> "%VBS_FILE%"
 echo oDeskLink.TargetPath = "%INSTALL_DIR%\Aghanya-Devanya-Hotel-ERP.exe" >> "%VBS_FILE%"
@@ -45,7 +50,7 @@ if exist "%INSTALL_DIR%\favicon.ico" (
 )
 echo oDeskLink.Save >> "%VBS_FILE%"
 
-:: Start Menu Shortcut
+rem Start Menu Shortcut
 echo sStartLink = "%STARTMENU_DIR%\%SHORTCUT_NAME%.lnk" >> "%VBS_FILE%"
 echo Set oStartLink = oWS.CreateShortcut(sStartLink) >> "%VBS_FILE%"
 echo oStartLink.TargetPath = "%INSTALL_DIR%\Aghanya-Devanya-Hotel-ERP.exe" >> "%VBS_FILE%"
@@ -74,3 +79,23 @@ if /i "%LAUNCH%"=="Y" (
     start "" "%INSTALL_DIR%\Aghanya-Devanya-Hotel-ERP.exe"
 )
 pause
+exit /b 0
+
+:noexe
+echo [ERROR] Aghanya-Devanya-Hotel-ERP.exe is folder mein nahi mili:
+echo         "%SCRIPT_DIR%"
+echo.
+echo  - GitHub ZIP mein EXE nahi hoti. Vendor se EXE lein,
+echo    ya Python wale PC par Build-New-EXE.bat chalayein.
+echo  - ZIP ho to pehle "Extract All" karein, phir ye file chalayein.
+echo  - Antivirus ne EXE hata di ho to use Allow / Restore karein.
+echo.
+pause
+exit /b 1
+
+:copyfail
+echo [ERROR] EXE copy nahi hui. Setu chal raha ho to band karein,
+echo         antivirus check karein, phir dobara chalayein.
+echo.
+pause
+exit /b 1

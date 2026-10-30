@@ -1,0 +1,87 @@
+# Builds the Windows EXE on GitHub, so nobody needs Python on their own PC.
+# Download: the "setu-latest" release on GitHub (Releases -> Setu-POS-Setup.exe installer),
+# or Actions -> "Build Setu EXE" -> latest run -> Artifacts -> Setu-POS-Setup.
+name: Build Setu EXE
+
+on:
+  push:
+    paths:
+      - 'app_main.py'
+      - 'hotel_erp.html'
+      - 'sw.js'
+      - 'manifest.json'
+      - '*.png'
+      - 'favicon.ico'
+      - '*.bat'
+      - 'installer/**'
+      - '.github/workflows/build-exe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # to update the setu-latest release
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build tools
+        run: python -m pip install --upgrade pyinstaller pywebview
+
+      # Same flags as Build-New-EXE.bat; keep both in sync
+      - name: Build EXE
+        shell: cmd
+        run: python -m PyInstaller --noconfirm --onefile --windowed --icon "favicon.ico" --name "Aghanya-Devanya-Hotel-ERP" --add-data "hotel_erp.html;." --add-data "manifest.json;." --add-data "sw.js;." --add-data "icon-192.png;." --add-data "icon-512.png;." --add-data "logo.png;." --add-data "favicon.ico;." app_main.py
+
+      # Only what a client PC needs: never keygen.py, keys or the cloud code
+      - name: Pack setup folder
+        shell: cmd
+        run: |
+          mkdir Setu-POS-Setup
+          copy dist\Aghanya-Devanya-Hotel-ERP.exe Setu-POS-Setup\
+          for %%f in (Install-Aghanya-Devanya-ERP-Setup.bat hotel_erp.html manifest.json sw.js icon-192.png icon-512.png logo.png favicon.ico) do copy %%f Setu-POS-Setup\
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Setu-POS-Setup
+          path: Setu-POS-Setup
+          retention-days: 90
+
+      # Real installer: Setu-POS-Setup.exe (Next -> Install -> Finish, shows in Apps & Uninstall)
+      - name: Build installer
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile installer\MicrosoftEdgeWebview2Setup.exe
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=1.0.${{ github.run_number }}" installer\setu-setup.iss
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Setu-POS-Installer
+          path: Output/Setu-POS-Setup.exe
+          retention-days: 90
+
+      # One fixed download link that always has the newest EXE
+      - name: Zip setup folder
+        shell: pwsh
+        run: Compress-Archive -Path Setu-POS-Setup -DestinationPath Setu-POS-Setup.zip -Force
+
+      - name: Update setu-latest release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = "Newest Setu EXE (branch ${{ github.ref_name }}, commit ${{ github.sha }}). Download Setu-POS-Setup.exe and double-click it (Next, Install, Finish). Setu-POS-Setup.zip = same app without installer."
+          gh release view setu-latest *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create setu-latest Output/Setu-POS-Setup.exe Setu-POS-Setup.zip --title "Setu POS - Latest EXE" --notes $notes --target ${{ github.sha }}
+          } else {
+            gh release edit setu-latest --notes $notes
+            gh release upload setu-latest Output/Setu-POS-Setup.exe Setu-POS-Setup.zip --clobber
+          }
